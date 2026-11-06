@@ -6,7 +6,7 @@ export interface Config {
   port: number;
   host: string;
   databaseUrl: string;
-  publicUrl: string; // how browsers and workers reach this API (signed URLs point here for local storage)
+  publicUrl: string; // prefix of local-storage signed URLs; "" (the default) makes them relative to the API's origin
   storage: { kind: "local"; dir: string } | { kind: "s3"; bucket: string; region: string; endpoint?: string };
   signingKey: Buffer; // signs local-storage URLs
   workerTokens: string[];
@@ -23,7 +23,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     host: env.HOST ?? "0.0.0.0",
     databaseUrl: env.DATABASE_URL ?? "postgres://nc@localhost:5432/neuracraft",
-    publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""),
+    publicUrl: (env.STORAGE_URL_PREFIX ?? "").replace(/\/$/, ""),
     storage:
       storageKind === "s3"
         ? { kind: "s3", bucket: env.S3_BUCKET ?? "neuracraft", region: env.S3_REGION ?? "auto", endpoint: env.S3_ENDPOINT }

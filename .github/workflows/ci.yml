@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  api-web:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nc
+          POSTGRES_PASSWORD: nc
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U nc" --health-interval 2s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://nc:nc@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci --no-audit --no-fund
+      - name: Build (shared, API, web)
+        run: npm run build
+      - name: API tests
+        run: npm test -w @neuracraft/api
+      - name: Web tests (translations)
+        run: npm test -w @neuracraft/web
+
+  worker-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nc
+          POSTGRES_PASSWORD: nc
+          POSTGRES_DB: nc_e2e
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U nc" --health-interval 2s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+      - name: Build the worker (engine at the pinned commit)
+        run: cmake -S worker -B worker/build -DCMAKE_BUILD_TYPE=Release && cmake --build worker/build --parallel --target neuracraft-worker
+      - run: npm ci --no-audit --no-fund && npm run build
+      - name: End to end (API + worker + engine)
+        env:
+          DATABASE_URL: postgres://nc:nc@localhost:5432/nc_e2e
+        run: node tests/e2e.mjs
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: API image
+        run: docker build -f deploy/api.Dockerfile --target api -t neuracraft-api .
+      - name: Web image
+        run: docker build -f deploy/api.Dockerfile --target web -t neuracraft-web .
+      - name: Worker image
+        run: docker build -f deploy/worker.Dockerfile -t neuracraft-worker .

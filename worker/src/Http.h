@@ -22,6 +22,7 @@ public:
     HttpResponse upload(const std::string& url, const std::string& file, const std::string& contentType) const;
 
 private:
+    std::string absolute(const std::string& url) const;
     std::string base_, token_;
 };
 

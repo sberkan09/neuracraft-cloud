@@ -45,7 +45,7 @@ function png(w, h, rgb) {
 }
 
 const server = spawn("node", [path.join(root, "apps/api/dist/src/main.js")], {
-  env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", PUBLIC_URL: api, STORAGE_DIR: path.join(data, "storage"), WORKER_TOKENS: token },
+  env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", STORAGE_DIR: path.join(data, "storage"), WORKER_TOKENS: token },
   stdio: ["ignore", "ignore", "inherit"],
 });
 let cookie = "";
@@ -75,7 +75,7 @@ try {
   assert.equal((await call("POST", "/v1/auth/signup", { email: `e2e${port}@example.com`, password: "correct horse battery" })).status, 201);
   const pic = png(16, 12, [200, 40, 10]);
   const a = await call("POST", "/v1/assets", { name: "red.png", kind: "input", bytes: pic.length, contentType: "image/png" });
-  assert.equal((await fetch(a.body.uploadUrl, { method: "PUT", body: pic, headers: { "content-type": "image/png" } })).status, 200);
+  assert.equal((await fetch(api + a.body.uploadUrl, { method: "PUT", body: pic, headers: { "content-type": "image/png" } })).status, 200);
   assert.equal((await call("POST", `/v1/assets/${a.body.asset.id}/complete`)).status, 200);
   const id = a.body.asset.id;
 
@@ -91,7 +91,7 @@ try {
   assert.equal(done1.state, "succeeded", JSON.stringify(done1));
   assert.equal(done1.outputs.length, 1);
   const link = await call("GET", `/v1/assets/${done1.outputs[0].assetId}/content`);
-  const out = Buffer.from(await (await fetch(link.headers.get("location"))).arrayBuffer());
+  const out = Buffer.from(await (await fetch(api + link.headers.get("location"))).arrayBuffer());
   assert.equal(out.readUInt32BE(16), 8);
   assert.equal(out.readUInt32BE(20), 6);
 
@@ -112,7 +112,7 @@ try {
   // 4. a catalog model (E2E_U2NETP: a folder with u2netp.onnx and its manifest u2netp.json)
   if (process.env.E2E_U2NETP) {
     const add = spawn("node", [path.join(root, "apps/api/dist/src/cli/add-model.js"), process.env.E2E_U2NETP, "--kind", "onnx", "--license", "Apache-2.0", "--name", "U2-Net (small)", "--entry", "u2netp.onnx"], {
-      env: { ...process.env, STORAGE_DIR: path.join(data, "storage"), PUBLIC_URL: api },
+      env: { ...process.env, STORAGE_DIR: path.join(data, "storage") },
       stdio: ["ignore", "pipe", "inherit"],
     });
     let modelId = "";
@@ -131,7 +131,7 @@ try {
     assert.equal(await runWorker(), 0);
     const done4 = (await call("GET", `/v1/jobs/${j4.body.job.id}`)).body.job;
     assert.equal(done4.state, "succeeded", JSON.stringify(done4));
-    const cut = Buffer.from(await (await fetch((await call("GET", `/v1/assets/${done4.outputs[0].assetId}/content`)).headers.get("location"))).arrayBuffer());
+    const cut = Buffer.from(await (await fetch(api + (await call("GET", `/v1/assets/${done4.outputs[0].assetId}/content`)).headers.get("location"))).arrayBuffer());
     assert.equal(cut[25], 6, "an RGBA picture");
   }
 

@@ -30,7 +30,7 @@ export async function harness(): Promise<Harness> {
   const url = new URL(server);
   url.pathname = `/${name}`;
   const dir = await mkdtemp(path.join(tmpdir(), "nc-storage-"));
-  const config = loadConfig({ DATABASE_URL: url.toString(), STORAGE_DIR: dir, WORKER_TOKENS: WORKER_TOKEN, PUBLIC_URL: "http://api.test", SIGNUP_CREDITS: "50000" });
+  const config = loadConfig({ DATABASE_URL: url.toString(), STORAGE_DIR: dir, WORKER_TOKENS: WORKER_TOKEN, SIGNUP_CREDITS: "50000" });
   const db = connect(config.databaseUrl);
   await migrate(db, config.migrationsDir);
   const events = new JobEvents(config.databaseUrl);
@@ -65,7 +65,7 @@ export async function signUp(app: FastifyInstance, email = `u${randomBytes(4).to
 export const json = (r: LightMyRequestResponse) => r.json() as any;
 
 // A signed storage URL as an inject path.
-export const local = (url: string) => new URL(url).pathname;
+export const local = (url: string) => (url.startsWith("/") ? url : new URL(url).pathname);
 
 export const PNG_1x1 = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63f8cfc0000003010100c9fe92ef0000000049454e44ae426082", "hex");
 

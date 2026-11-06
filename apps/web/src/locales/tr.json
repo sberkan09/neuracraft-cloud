@@ -1,0 +1,81 @@
+{
+  "app": { "name": "NeuraCraft Cloud", "tagline": "Görüntü, video ve model hatları, sizin için çalışır." },
+  "language": { "label": "Dil", "en": "English", "tr": "Türkçe" },
+  "auth": {
+    "login": "Giriş yap",
+    "signup": "Hesap oluştur",
+    "logout": "Çıkış yap",
+    "email": "E-posta",
+    "password": "Parola",
+    "passwordHint": "En az 10 karakter",
+    "haveAccount": "Zaten hesabın var mı?",
+    "noAccount": "Yeni misin?",
+    "working": "Bir saniye…"
+  },
+  "home": {
+    "credits": "Kredi",
+    "creditsValue": "{{value}} kredi",
+    "pictures": "Resimlerin",
+    "upload": "Resim yükle",
+    "uploading": "Yükleniyor…",
+    "noPictures": "Henüz resim yok. Bir PNG ya da JPEG yükle.",
+    "run": "Çalıştır",
+    "task": "Görev",
+    "picture": "Resim",
+    "model": "Model",
+    "noModels": "Bu türde katalog modeli henüz yok.",
+    "workflowJson": "İş akışı (JSON)",
+    "jobs": "İşler",
+    "noJobs": "Henüz hiçbir şey çalışmadı.",
+    "cancel": "İptal et",
+    "download": "İndir",
+    "license": "Lisans: {{license}}"
+  },
+  "tasks": {
+    "removeBackground": "Arka planı kaldır",
+    "edges": "Kenarları bul",
+    "resize": "512 × 512 boyutuna getir",
+    "custom": "Özel iş akışı"
+  },
+  "job": {
+    "state": {
+      "queued": "Worker bekleniyor",
+      "leased": "Başlıyor",
+      "running": "Çalışıyor",
+      "succeeded": "Bitti",
+      "failed": "Başarısız",
+      "cancelled": "İptal edildi"
+    },
+    "step": "Adım {{step}} / {{steps}}: {{op}}",
+    "seconds": "{{value}} sn worker süresi"
+  },
+  "errors": {
+    "auth.required": "Lütfen giriş yap.",
+    "auth.invalid_credentials": "E-posta ile parola eşleşmiyor.",
+    "auth.email_taken": "Bu e-postayla bir hesap zaten var.",
+    "auth.weak_password": "En az {{min}} karakterlik bir parola kullan.",
+    "auth.invalid_email": "Bu bir e-posta adresine benzemiyor.",
+    "request.invalid": "İstekte bir şey doğru değildi.",
+    "request.too_large": "Dosya çok büyük.",
+    "rate_limited": "Çok fazla istek. Bir dakika sonra tekrar dene.",
+    "not_found": "Bulunamadı.",
+    "forbidden": "Bunu yapamazsın.",
+    "workflow.invalid": "İş akışı geçerli değil: {{reason}}",
+    "workflow.asset_missing": "İş akışı sende olmayan bir dosyayı kullanıyor.",
+    "workflow.path_not_allowed": "İş akışlarında dosyalar asset kimliğiyle, kayıtlar düz dosya adıyla verilir (adım {{step}}).",
+    "limit.steps": "Planın en fazla {{max}} adıma izin veriyor.",
+    "limit.pixels": "Planın en fazla {{max}} piksellik resimlere izin veriyor.",
+    "limit.frames": "Planın en fazla {{max}} kareye izin veriyor.",
+    "limit.denoise_steps": "Planın en fazla {{max}} gürültü giderme adımına izin veriyor.",
+    "limit.time": "İşin süresi doldu.",
+    "limit.concurrent_jobs": "Zaten bekleyen ya da çalışan {{max}} işin var.",
+    "credits.insufficient": "Bu iş için yeterli kredin yok.",
+    "job.not_cancellable": "Bu iş zaten bitti.",
+    "job.failed": "İş başarısız oldu.",
+    "worker.unauthorized": "Worker yetkili değil.",
+    "worker.lease_lost": "Worker bu işi kaybetti.",
+    "model.unsupported": "Bu model desteklenmiyor.",
+    "internal": "Bizim tarafımızda bir sorun oldu. Ücret alınmadı.",
+    "network": "Sunucuya ulaşılamıyor."
+  }
+}

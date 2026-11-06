@@ -38,6 +38,9 @@ void check(CURLcode c, const std::string& what) {
 
 Http::Http(std::string base, std::string token) : base_(std::move(base)), token_(std::move(token)) {}
 
+// Signed URLs of the API's own storage are relative ("/v1/storage/..."): taken from the API's address.
+std::string Http::absolute(const std::string& url) const { return !url.empty() && url[0] == '/' ? base_ + url : url; }
+
 HttpResponse Http::post(const std::string& path, const std::string& json, long timeoutSeconds) const {
     Easy e(curl_easy_init(), curl_easy_cleanup);
     HttpResponse r;
@@ -56,7 +59,8 @@ HttpResponse Http::post(const std::string& path, const std::string& json, long t
     return r;
 }
 
-std::string Http::download(const std::string& url, const std::string& file) const {
+std::string Http::download(const std::string& signedUrl, const std::string& file) const {
+    const std::string url = absolute(signedUrl);
     Easy e(curl_easy_init(), curl_easy_cleanup);
     Sink sink{std::fopen(file.c_str(), "wb"), {}};
     if (!sink.f) throw std::runtime_error("cannot write " + file);
@@ -75,7 +79,8 @@ std::string Http::download(const std::string& url, const std::string& file) cons
     return sink.hash.hex();
 }
 
-HttpResponse Http::upload(const std::string& url, const std::string& file, const std::string& contentType) const {
+HttpResponse Http::upload(const std::string& signedUrl, const std::string& file, const std::string& contentType) const {
+    const std::string url = absolute(signedUrl);
     Easy e(curl_easy_init(), curl_easy_cleanup);
     std::FILE* f = std::fopen(file.c_str(), "rb");
     if (!f) throw std::runtime_error("cannot read " + file);

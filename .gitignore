@@ -6,3 +6,4 @@ build/
 .data/
 worker/build/
 worker/bin/
+deploy/.env
