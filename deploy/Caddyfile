@@ -1,0 +1,17 @@
+# The web app and the API behind one origin (the session cookie and signed URLs need no CORS).
+{
+	admin off
+}
+:{$PORT:8000} {
+	encode gzip
+	handle /v1/* {
+		reverse_proxy {$API_UPSTREAM:api:8080} {
+			flush_interval -1
+		}
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

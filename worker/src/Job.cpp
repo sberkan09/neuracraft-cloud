@@ -1,0 +1,296 @@
+#include "Job.h"
+#include "Sha256.h"
+
+#include "Image.h"
+#include "Workflow.h"
+
+#include <atomic>
+#include <chrono>
+#include <algorithm>
+#include <cctype>
+#include <condition_variable>
+#include <cstring>
+#include <filesystem>
+#include <iostream>
+#include <map>
+#include <mutex>
+#include <regex>
+#include <thread>
+
+namespace fs = std::filesystem;
+using nc::json::Value;
+
+namespace {
+
+std::string safeName(const std::string& name) {
+    std::string out;
+    for (char c : name) out += (std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '_') ? c : '_';
+    if (out.empty() || out[0] == '.') out = "file" + out;
+    return out.substr(0, 120);
+}
+
+// A relative path inside a bundle: no root, no "..".
+bool safeRelative(const std::string& p) {
+    const fs::path path(p);
+    if (p.empty() || path.is_absolute() || path.has_root_name()) return false;
+    for (const auto& part : path)
+        if (part == ".." || part == ".") return false;
+    return true;
+}
+
+// The cached copy of a blob, downloaded (and checked) when missing.
+std::string cachedBlob(const Http& api, const WorkerSettings& s, const std::string& sha256, const std::string& url) {
+    if (!std::regex_match(sha256, std::regex("[0-9a-f]{64}"))) throw std::runtime_error("bad file hash from the API");
+    const fs::path blob = fs::path(s.cacheDir) / "blobs" / sha256;
+    if (fs::exists(blob)) {
+        fs::last_write_time(blob, fs::file_time_type::clock::now());  // recently used
+        return blob.string();
+    }
+    fs::create_directories(blob.parent_path());
+    const std::string part = blob.string() + ".part";
+    const std::string got = api.download(url, part);
+    if (got != sha256) {
+        fs::remove(part);
+        throw std::runtime_error("download of " + sha256 + " arrived corrupted");
+    }
+    fs::rename(part, blob);
+    return blob.string();
+}
+
+// Drops the least recently used blobs while the cache is over its size.
+void trimCache(const WorkerSettings& s) {
+    std::vector<std::pair<fs::file_time_type, fs::path>> files;
+    unsigned long long total = 0;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(fs::path(s.cacheDir) / "blobs", ec)) {
+        if (!e.is_regular_file()) continue;
+        total += e.file_size();
+        files.push_back({e.last_write_time(), e.path()});
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& [t, p] : files) {
+        if (total <= s.cacheMaxBytes) break;
+        total -= fs::file_size(p, ec);
+        fs::remove(p, ec);
+    }
+}
+
+std::string contentType(const std::string& name) {
+    auto ends = [&](const char* e) { return name.size() >= std::strlen(e) && name.compare(name.size() - std::strlen(e), std::strlen(e), e) == 0; };
+    if (ends(".png")) return "image/png";
+    if (ends(".jpg") || ends(".jpeg")) return "image/jpeg";
+    if (ends(".gif")) return "image/gif";
+    if (ends(".mov")) return "video/quicktime";
+    return "application/octet-stream";
+}
+
+std::string str(const Value& v, const char* key) {
+    const Value* x = v.find(key);
+    return x && x->isString() ? x->string : std::string();
+}
+
+void report(const Http& api, const std::string& path, const Value& body) {
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        try {
+            const HttpResponse r = api.post(path, nc::json::dump(body));
+            if (r.status < 500) {
+                if (r.status >= 400) std::cerr << "worker: " << path << " -> " << r.status << " " << r.body << "\n";
+                return;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "worker: " << path << ": " << e.what() << "\n";
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1 << attempt));
+    }
+}
+
+} // namespace
+
+std::string errorCode(const std::exception& e) {
+    const std::string m = e.what();
+    if (dynamic_cast<const nc::WorkflowCancelled*>(&e)) return "cancelled";
+    if (dynamic_cast<const nc::WorkflowLimitExceeded*>(&e)) {
+        if (m.find("ran longer") != std::string::npos) return "limit.time";
+        if (m.find("pixel") != std::string::npos || m.find(" x ") != std::string::npos) return "limit.pixels";
+        if (m.find("frame") != std::string::npos) return "limit.frames";
+        if (m.find("denoising") != std::string::npos) return "limit.denoise_steps";
+        if (m.find("steps,") != std::string::npos) return "limit.steps";
+        return "workflow.path_not_allowed";
+    }
+    if (m.find("is not supported") != std::string::npos || m.find("unsupported") != std::string::npos) return "model.unsupported";
+    if (m.find("too big to decode") != std::string::npos) return "limit.pixels";
+    if (dynamic_cast<const std::invalid_argument*>(&e)) return "workflow.invalid";
+    return "job.failed";
+}
+
+void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
+    const std::string jobId = str(job, "jobId");
+    const fs::path dir = fs::path(s.workDir) / safeName(jobId);
+    const auto started = std::chrono::steady_clock::now();
+    auto seconds = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
+
+    // Heartbeats keep the lease and carry progress; their answer may ask to cancel.
+    std::atomic<bool> cancel{false}, done{false};
+    std::mutex mutex;
+    std::condition_variable wake;
+    Value progress;
+    bool fresh = false;
+    std::thread beat([&] {
+        std::unique_lock<std::mutex> lock(mutex);
+        while (!done) {
+            wake.wait_for(lock, std::chrono::duration<double>(s.heartbeatSeconds));
+            if (done) break;
+            Value body = nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)}});
+            if (fresh) body.object.push_back({"progress", progress});
+            fresh = false;
+            lock.unlock();
+            try {
+                const HttpResponse r = api.post("/v1/worker/jobs/" + jobId + "/heartbeat", nc::json::dump(body), 15);
+                if (r.status == 409) cancel = true;  // the lease is gone: stop working on it
+                else if (r.status == 200) {
+                    const Value v = nc::json::parse(r.body);
+                    if (const Value* c = v.find("cancel"); c && c->boolean) cancel = true;
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "worker: heartbeat: " << e.what() << "\n";
+            }
+            lock.lock();
+        }
+    });
+    auto finish = [&] {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            done = true;
+        }
+        wake.notify_all();
+        beat.join();
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+    };
+
+    try {
+        fs::remove_all(dir);
+        fs::create_directories(dir / "assets");
+        fs::create_directories(dir / "out");
+        // The job's files, linked under readable names from the cache.
+        std::map<std::string, std::string> local;  // asset id -> path the workflow gets
+        if (const Value* files = job.find("files"))
+            for (const Value& f : files->array) {
+                const std::string id = safeName(str(f, "assetId"));
+                const fs::path home = dir / "assets" / id;
+                fs::create_directories(home);
+                if (const Value* parts = f.find("files"); parts && !parts->array.empty()) {
+                    for (const Value& p : parts->array) {
+                        const std::string rel = str(p, "path");
+                        if (!safeRelative(rel)) throw std::runtime_error("bad path in a model folder");
+                        const fs::path target = home / rel;
+                        fs::create_directories(target.parent_path());
+                        fs::create_symlink(cachedBlob(api, s, str(p, "sha256"), str(p, "url")), target);
+                    }
+                    const std::string entry = str(f, "entry");
+                    if (!entry.empty() && !safeRelative(entry)) throw std::runtime_error("bad bundle entry");
+                    local[str(f, "assetId")] = entry.empty() ? home.string() : (home / entry).string();
+                } else {
+                    const fs::path target = home / safeName(str(f, "name"));
+                    fs::create_symlink(cachedBlob(api, s, str(f, "sha256"), str(f, "url")), target);
+                    local[str(f, "assetId")] = target.string();
+                }
+            }
+
+        const nc::WorkflowOp* saveOp = nc::findWorkflowOp("save");
+        const nc::WorkflowField* savePath = nullptr;
+        for (const auto& fd : saveOp->fields)
+            if (fd.name == "path") savePath = &fd;
+        const std::regex outputName("[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\.(png|jpe?g|gif|mov)");
+        const std::string text = nc::mapWorkflowFiles(nc::json::dump(job.at("workflow")), [&](const nc::WorkflowField& field, const std::string& v) {
+            if (&field == savePath) {
+                if (!std::regex_match(v, outputName)) throw std::invalid_argument("save: bad output name " + v);
+                return (dir / "out" / v).string();
+            }
+            if (v.rfind("asset:", 0) != 0 || !local.count(v.substr(6))) throw nc::WorkflowLimitExceeded("file " + v + " is not part of the job");
+            return local.at(v.substr(6));
+        });
+
+        const Value& lim = job.at("limits");
+        nc::WorkflowLimits limits;
+        limits.readRoots = {(dir / "assets").string(), s.cacheDir};
+        limits.writeRoot = (dir / "out").string();
+        limits.maxSteps = static_cast<std::size_t>(lim.numberOr("maxSteps", 0));
+        limits.maxPixels = static_cast<std::size_t>(lim.numberOr("maxPixels", 0));
+        limits.maxFrames = static_cast<std::size_t>(lim.numberOr("maxFrames", 0));
+        limits.maxDenoiseSteps = static_cast<std::size_t>(lim.numberOr("maxDenoiseSteps", 0));
+        limits.maxSeconds = lim.numberOr("maxSeconds", 0);
+
+        nc::WorkflowEvents events;
+        events.cancelled = [&] { return cancel.load(); };
+        events.progress = [&](std::size_t step, std::size_t steps, const std::string& op, const std::string& stage, double fraction) {
+            std::lock_guard<std::mutex> lock(mutex);
+            progress = nc::json::makeObject({{"step", nc::json::makeNumber(static_cast<double>(step))},
+                                             {"steps", nc::json::makeNumber(static_cast<double>(steps))},
+                                             {"op", nc::json::makeString(op)},
+                                             {"stage", nc::json::makeString(stage)},
+                                             {"fraction", nc::json::makeNumber(fraction)}});
+            fresh = true;
+        };
+        const auto clips = nc::runWorkflow(text, dir.string(), events, nullptr, limits);
+
+        // Without a save step, the last clip made is the result.
+        std::vector<fs::path> outputs;
+        for (const auto& e : fs::directory_iterator(dir / "out"))
+            if (e.is_regular_file()) outputs.push_back(e.path());
+        if (outputs.empty()) {
+            std::string last;
+            for (const Value& st : job.at("workflow").at("steps").array) {
+                const std::string op = str(st, "op");
+                if (op == "save") continue;
+                last = str(st, "out").empty() ? op : str(st, "out");
+            }
+            auto it = clips.find(last);
+            if (it != clips.end() && !it->second.empty()) {
+                const fs::path p = dir / "out" / (it->second.size() == 1 ? "result.png" : "result.gif");
+                if (it->second.size() == 1) nc::savePng(p.string(), it->second.front());
+                else nc::saveGif(p.string(), it->second, 8.0f);
+                outputs.push_back(p);
+            }
+        }
+        std::sort(outputs.begin(), outputs.end());
+
+        Value list = nc::json::makeArray();
+        for (const auto& p : outputs)
+            list.array.push_back(nc::json::makeObject({{"name", nc::json::makeString(p.filename().string())},
+                                                       {"bytes", nc::json::makeNumber(static_cast<double>(fs::file_size(p)))},
+                                                       {"contentType", nc::json::makeString(contentType(p.filename().string()))}}));
+        const HttpResponse up = api.post("/v1/worker/jobs/" + jobId + "/uploads",
+                                         nc::json::dump(nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)}, {"outputs", list}})));
+        if (up.status != 200) throw std::runtime_error("uploads refused: " + std::to_string(up.status) + " " + up.body);
+        const Value grants = nc::json::parse(up.body);
+        Value stored = nc::json::makeArray();
+        for (std::size_t i = 0; i < outputs.size(); ++i) {
+            const Value& g = grants.at("uploads").array.at(i);
+            const std::string type = contentType(outputs[i].filename().string());
+            const HttpResponse put = api.upload(str(g, "url"), outputs[i].string(), type);
+            if (put.status != 200) throw std::runtime_error("upload failed: " + std::to_string(put.status));
+            stored.array.push_back(nc::json::makeObject({{"name", nc::json::makeString(outputs[i].filename().string())},
+                                                         {"key", nc::json::makeString(str(g, "key"))},
+                                                         {"bytes", nc::json::makeNumber(static_cast<double>(fs::file_size(outputs[i])))},
+                                                         {"sha256", nc::json::makeString(sha256File(outputs[i].string()))},
+                                                         {"contentType", nc::json::makeString(type)}}));
+        }
+        const double used = seconds();
+        finish();
+        report(api, "/v1/worker/jobs/" + jobId + "/complete",
+               nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)}, {"outputs", stored}, {"workerSeconds", nc::json::makeNumber(used)}}));
+        std::cerr << "worker: job " << jobId << " done in " << used << " s, " << outputs.size() << " output(s)\n";
+    } catch (const std::exception& e) {
+        const double used = seconds();
+        const std::string code = errorCode(e);
+        finish();
+        report(api, "/v1/worker/jobs/" + jobId + "/fail",
+               nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)},
+                                     {"code", nc::json::makeString(code)},
+                                     {"detail", nc::json::makeString(std::string(e.what()).substr(0, 2000))},
+                                     {"workerSeconds", nc::json::makeNumber(used)}}));
+        std::cerr << "worker: job " << jobId << " failed (" << code << "): " << e.what() << "\n";
+    }
+    trimCache(s);
+}

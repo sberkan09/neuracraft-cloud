@@ -1,0 +1,81 @@
+{
+  "app": { "name": "NeuraCraft Cloud", "tagline": "Image, video and model pipelines, run for you." },
+  "language": { "label": "Language", "en": "English", "tr": "Türkçe" },
+  "auth": {
+    "login": "Log in",
+    "signup": "Create account",
+    "logout": "Log out",
+    "email": "Email",
+    "password": "Password",
+    "passwordHint": "At least 10 characters",
+    "haveAccount": "Already have an account?",
+    "noAccount": "New here?",
+    "working": "One moment…"
+  },
+  "home": {
+    "credits": "Credits",
+    "creditsValue": "{{value}} credits",
+    "pictures": "Your pictures",
+    "upload": "Upload a picture",
+    "uploading": "Uploading…",
+    "noPictures": "No pictures yet. Upload a PNG or JPEG.",
+    "run": "Run",
+    "task": "Task",
+    "picture": "Picture",
+    "model": "Model",
+    "noModels": "No catalog model of this kind yet.",
+    "workflowJson": "Workflow (JSON)",
+    "jobs": "Jobs",
+    "noJobs": "Nothing has run yet.",
+    "cancel": "Cancel",
+    "download": "Download",
+    "license": "License: {{license}}"
+  },
+  "tasks": {
+    "removeBackground": "Remove the background",
+    "edges": "Find edges",
+    "resize": "Resize to 512 × 512",
+    "custom": "Custom workflow"
+  },
+  "job": {
+    "state": {
+      "queued": "Waiting for a worker",
+      "leased": "Starting",
+      "running": "Running",
+      "succeeded": "Done",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "step": "Step {{step}} of {{steps}}: {{op}}",
+    "seconds": "{{value}} s of worker time"
+  },
+  "errors": {
+    "auth.required": "Please log in.",
+    "auth.invalid_credentials": "That email and password do not match.",
+    "auth.email_taken": "An account with this email already exists.",
+    "auth.weak_password": "Use a password of at least {{min}} characters.",
+    "auth.invalid_email": "That does not look like an email address.",
+    "request.invalid": "Something in that request was not right.",
+    "request.too_large": "That file is too large.",
+    "rate_limited": "Too many requests. Try again in a minute.",
+    "not_found": "Not found.",
+    "forbidden": "You cannot do that.",
+    "workflow.invalid": "The workflow is not valid: {{reason}}",
+    "workflow.asset_missing": "The workflow uses a file you do not have.",
+    "workflow.path_not_allowed": "Workflows name files with asset ids and saves with plain file names (step {{step}}).",
+    "limit.steps": "Your plan allows up to {{max}} steps.",
+    "limit.pixels": "Your plan allows pictures up to {{max}} pixels.",
+    "limit.frames": "Your plan allows up to {{max}} frames.",
+    "limit.denoise_steps": "Your plan allows up to {{max}} denoising steps.",
+    "limit.time": "The job ran out of time.",
+    "limit.concurrent_jobs": "You already have {{max}} jobs waiting or running.",
+    "credits.insufficient": "Not enough credits for this job.",
+    "job.not_cancellable": "This job has already finished.",
+    "job.failed": "The job failed.",
+    "worker.unauthorized": "Worker not authorised.",
+    "worker.lease_lost": "The worker lost this job.",
+    "model.unsupported": "This model is not supported.",
+    "internal": "Something went wrong on our side. You were not charged.",
+    "network": "Cannot reach the server."
+  }
+}

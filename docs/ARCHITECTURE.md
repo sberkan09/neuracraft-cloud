@@ -142,6 +142,8 @@ docs            this file, the roadmap, runbooks
    readers. *Done in NeuraCraft #62.*
 2. **Local MVP**: accounts (email + password, Google later), upload, submit a workflow, live
    progress, results gallery; one CPU worker; English + Turkish; runs with `docker compose up`.
+   *In progress: API, scheduler (claims, fairness, leases, retries, cancellation), credit ledger,
+   worker and a first web app are in; the Studio graph editor comes next.*
 3. **Many workers**: model-aware claiming, fairness, leases and retries, cancellation, quotas,
    credit ledger, usage metering, worker container hardening.
 4. **Product**: payments (MoR), content safety, terms / takedown flows, production deployment
