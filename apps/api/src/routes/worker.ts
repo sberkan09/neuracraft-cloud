@@ -108,7 +108,11 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
         await c.query("INSERT INTO job_outputs (job_id, name, asset_id) VALUES ($1, $2, $3)", [req.params.id, o.name, a.rows[0]!.id]);
         await publish(c, req.params.id, { type: "output", output: { name: o.name, assetId: a.rows[0]!.id, kind: o.contentType.startsWith("image/") ? "image" : o.contentType.startsWith("video/") ? "video" : "file", bytes: o.bytes } });
       }
-      await c.query("UPDATE jobs SET state = 'succeeded', finished_at = now(), worker_seconds = $2, lease_until = NULL WHERE id = $1", [req.params.id, seconds]);
+      await c.query(
+        `UPDATE jobs SET state = 'succeeded', finished_at = now(), worker_seconds = $2, lease_until = NULL,
+                started_at = coalesce(started_at, now() - make_interval(secs => $2)) WHERE id = $1`,
+        [req.params.id, seconds],
+      );
       await settleJob(c, req.params.id, cost(j.worker_class, seconds));
       await publish(c, req.params.id, { type: "state", state: "succeeded" });
     });
@@ -123,12 +127,16 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     const seconds = Math.max(0, Number(body.workerSeconds) || 0);
     const state = code === "cancelled" || j.cancel ? "cancelled" : "failed";
     await tx(s.db, async (c) => {
-      await c.query("UPDATE jobs SET state = $2, finished_at = now(), worker_seconds = $3, error = $4, lease_until = NULL WHERE id = $1", [
-        req.params.id,
-        state,
-        seconds,
-        state === "cancelled" ? null : JSON.stringify({ code, detail: String(body.detail ?? "").slice(0, 2000) }),
-      ]);
+      await c.query(
+        `UPDATE jobs SET state = $2, finished_at = now(), worker_seconds = $3, error = $4, lease_until = NULL,
+                started_at = coalesce(started_at, now() - make_interval(secs => $3)) WHERE id = $1`,
+        [
+          req.params.id,
+          state,
+          seconds,
+          state === "cancelled" ? null : JSON.stringify({ code, detail: String(body.detail ?? "").slice(0, 2000) }),
+        ],
+      );
       await settleJob(c, req.params.id, userFault(code) ? cost(j.worker_class, seconds) : 0);
       if (state === "failed") await publish(c, req.params.id, { type: "error", error: { code, detail: body.detail } });
       await publish(c, req.params.id, { type: "state", state });

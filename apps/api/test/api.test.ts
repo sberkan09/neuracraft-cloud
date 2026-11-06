@@ -95,6 +95,21 @@ describe("jobs", () => {
     assert.equal(await code({ steps: Array.from({ length: 13 }, () => ({ op: "resize", in: "p" })) }), "limit.steps");
   });
 
+  it("gives a job that finishes before its first heartbeat a start time", async () => {
+    const a = await signUp(h.app);
+    const pic = await uploadPicture(h.app, a.cookie);
+    const jobId = json(await inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: resize(pic) } })).job.id;
+    const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "cpu", cores: 1, memoryBytes: 1, engineVersion: "test" } })).workerId;
+    assert.equal(json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job.jobId, jobId);
+    const done = await inject({ method: "POST", url: `/v1/worker/jobs/${jobId}/complete`, headers: worker, payload: { workerId, workerSeconds: 2, outputs: [] } });
+    assert.equal(done.statusCode, 200);
+    const fin = json(await inject({ method: "GET", url: `/v1/jobs/${jobId}`, headers: { cookie: a.cookie } })).job;
+    assert.equal(fin.state, "succeeded");
+    assert.ok(fin.startedAt, "startedAt is set");
+    const ms = Date.parse(fin.finishedAt) - Date.parse(fin.startedAt);
+    assert.ok(ms >= 1900 && ms <= 2100, String(ms));
+  });
+
   it("runs end to end through a worker: claim, progress, outputs, billing", async () => {
     const a = await signUp(h.app);
     const pic = await uploadPicture(h.app, a.cookie);

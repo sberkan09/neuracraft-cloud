@@ -21,6 +21,8 @@ RUN npm ci --omit=dev --no-audit --no-fund -w @neuracraft/api -w @neuracraft/sha
 COPY --from=build /src/packages/shared/dist packages/shared/dist
 COPY --from=build /src/apps/api/dist apps/api/dist
 COPY db db
+# The storage volume takes this folder's owner when it is first created: the API (user node) writes there.
+RUN mkdir -p /data/storage && chown node:node /data/storage
 USER node
 EXPOSE 8080
 CMD ["node", "apps/api/dist/src/main.js"]

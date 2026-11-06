@@ -29,10 +29,14 @@ services:
     volumes:
       - storage:/data/storage
       - ${MODELS_DIR:-./models}:/models:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/v1/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 2s
+      retries: 30
 
   web:
     build: { context: .., dockerfile: deploy/api.Dockerfile, target: web }
-    depends_on: [api]
+    depends_on: { api: { condition: service_healthy } }
     ports: ["${PORT:-8000}:8000"]
 
   worker:
