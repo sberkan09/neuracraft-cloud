@@ -130,7 +130,8 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
 * API errors are `{error: {code, params}}`; the web turns codes into sentences. Emails and
   notifications use the same keys.
 * The engine's operation titles and field docs are English in its schema; the web looks for
-  `ops.<op>.title` / `ops.<op>.fields.<field>` keys first and falls back to the schema text.
+  `studio.ops.<op>`, `studio.docs.<op>` and `studio.fields.<field>` keys first and falls back to the
+  schema text, so a new engine operation appears at once and is translated when its keys are added.
 
 ## Repository layout
 
@@ -150,8 +151,9 @@ docs            this file, the roadmap, runbooks
    readers. *Done in NeuraCraft #62.*
 2. **Local MVP**: accounts (email + password, Google later), upload, submit a workflow, live
    progress, results gallery; one CPU worker; English + Turkish; runs with `docker compose up`.
-   *In progress: API, scheduler (claims, fairness, leases, retries, cancellation), credit ledger,
-   worker and a first web app are in; the Studio graph editor comes next.*
+   *In: API, scheduler (claims, fairness, leases, retries, cancellation), credit ledger, worker,
+   the web app's ready-made tasks and the Studio workflow editor (node graph, list and JSON views;
+   every operation and field of the engine's schema; runs as ordinary jobs).*
 3. **Many workers**: model-aware claiming, fairness, leases and retries, cancellation, quotas,
    credit ledger, usage metering, worker container hardening.
 4. **Product**: payments (MoR), content safety, terms / takedown flows, production deployment

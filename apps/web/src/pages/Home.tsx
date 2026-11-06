@@ -6,7 +6,7 @@ import { tasks } from "../tasks";
 import { useErrorText } from "../useError";
 import { JobCard } from "./JobCard";
 
-export function Home() {
+export function Home({ openStudio }: { openStudio: (workflow: unknown) => void }) {
   const { t, i18n } = useTranslation();
   const errorText = useErrorText();
   const [credits, setCredits] = useState(0);
@@ -128,16 +128,27 @@ export function Home() {
           </label>
         )}
         {error && <p className="error" role="alert">{error}</p>}
-        <button onClick={run} disabled={!canRun}>
-          {t("home.run")}
-        </button>
+        <div className="row">
+          <button onClick={run} disabled={!canRun}>
+            {t("home.run")}
+          </button>
+          <button className="ghost" onClick={() => {
+            try {
+              openStudio(taskId === "custom" ? JSON.parse(custom) : task.workflow(picture || "", model));
+            } catch (e) {
+              setError(t("errors.workflow.invalid", { reason: (e as Error).message }));
+            }
+          }}>
+            {t("studio.editInStudio")}
+          </button>
+        </div>
       </section>
 
       <section className="card jobs">
         <h2>{t("home.jobs")}</h2>
         {jobs.length === 0 && <p className="muted">{t("home.noJobs")}</p>}
         {jobs.map((j) => (
-          <JobCard key={j.id} job={j} onChange={(nj) => setJobs((all) => all.map((x) => (x.id === nj.id ? nj : x)))} onFinished={() => api.me().then((m) => setCredits(m.credits))} />
+          <JobCard key={j.id} job={j} onChange={(nj) => setJobs((all) => all.map((x) => (x.id === nj.id ? nj : x)))} onFinished={() => api.me().then((m) => setCredits(m.credits))} onOpen={openStudio} />
         ))}
       </section>
     </div>

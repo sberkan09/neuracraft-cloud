@@ -4,10 +4,17 @@ import { api, ApiError, type User } from "./api";
 import { LANGUAGES, setLanguage, type Language } from "./i18n";
 import { Auth } from "./pages/Auth";
 import { Home } from "./pages/Home";
+import type { Workflow } from "./studio/graph";
+import { loadDraft, Studio } from "./studio/Studio";
+
+type Page = "home" | "studio";
+const pageFromHash = (): Page => (location.hash === "#studio" ? "studio" : "home");
 
 export function App() {
   const { t, i18n } = useTranslation();
   const [user, setUser] = useState<User | null | undefined>(undefined);
+  const [page, setPage] = useState<Page>(pageFromHash);
+  const [workflow, setWorkflow] = useState<Workflow>(loadDraft);
 
   useEffect(() => {
     api
@@ -18,6 +25,20 @@ export function App() {
       })
       .catch((e) => setUser(e instanceof ApiError && e.code === "auth.required" ? null : null));
   }, []);
+  useEffect(() => {
+    const onHash = () => setPage(pageFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const go = (p: Page) => {
+    location.hash = p === "studio" ? "studio" : "";
+    setPage(p);
+  };
+  const openStudio = (wf: unknown) => {
+    const w = wf as Workflow | null;
+    if (w && Array.isArray(w.steps)) setWorkflow({ ...w, steps: w.steps.map((s) => ({ ...s })) });
+    go("studio");
+  };
 
   const changeLanguage = (l: Language) => {
     setLanguage(l);
@@ -25,11 +46,17 @@ export function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app ${user && page === "studio" ? "wide" : ""}`}>
       <header className="top">
         <div className="brand">
           <span className="logo" aria-hidden>◆</span> {t("app.name")}
         </div>
+        {user && (
+          <nav className="segmented" aria-label={t("nav.label")}>
+            <button type="button" aria-pressed={page === "home"} onClick={() => go("home")}>{t("nav.tasks")}</button>
+            <button type="button" aria-pressed={page === "studio"} onClick={() => go("studio")}>{t("nav.studio")}</button>
+          </nav>
+        )}
         <div className="top-actions">
           <label className="lang">
             <span className="sr-only">{t("language.label")}</span>
@@ -48,7 +75,15 @@ export function App() {
           )}
         </div>
       </header>
-      <main>{user === undefined ? null : user ? <Home /> : <Auth onIn={setUser} />}</main>
+      <main>
+        {user === undefined ? null : !user ? (
+          <Auth onIn={setUser} />
+        ) : page === "studio" ? (
+          <Studio workflow={workflow} onWorkflow={setWorkflow} />
+        ) : (
+          <Home openStudio={openStudio} />
+        )}
+      </main>
     </div>
   );
 }
