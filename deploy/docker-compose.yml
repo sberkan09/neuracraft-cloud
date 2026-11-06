@@ -45,6 +45,8 @@ services:
     environment:
       API_URL: http://web:8000
       WORKER_TOKEN: ${WORKER_TOKEN}
+      CACHE_MAX_GB: ${WORKER_CACHE_GB:-20}
+    # One cache volume for all replicas: files by hash are shared, each worker links its own copies.
     volumes: [cache:/data]
     read_only: true
     tmpfs: [/tmp]
