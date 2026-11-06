@@ -15,8 +15,10 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     try {
       const bytes = await store.write(g.k, req.body as Readable, g.n ?? 0);
       return { ok: true, bytes };
-    } catch {
-      return fail(413, "request.too_large");
+    } catch (e) {
+      // Only an over-long body is the client's fault; anything else (a full disk, no permission) is ours.
+      if ((e as Error).message === "too large") return fail(413, "request.too_large");
+      throw e;
     }
   });
   app.get<{ Params: { token: string } }>("/v1/storage/:token", async (req, reply) => {

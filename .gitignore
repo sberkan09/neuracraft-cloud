@@ -7,3 +7,5 @@ build/
 worker/build/
 worker/bin/
 deploy/.env
+deploy/models/**/*.onnx
+deploy/models/**/*.safetensors

@@ -30,9 +30,14 @@ cp deploy/.env.example deploy/.env      # fill in the secrets (openssl rand -hex
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
 ```
 
-Then open http://localhost:8000. Catalog models (offered to everyone, each with its license):
+Then open http://localhost:8000. Catalog models (offered to everyone, each with its license) are
+read from `deploy/models` (`MODELS_DIR`). An ONNX picture model takes its pre- and post-processing
+from a manifest next to it, `<model>.json` (see the engine's README); u2netp's is in the repository,
+the weights are not:
 
 ```
+curl -L -o deploy/models/u2netp/u2netp.onnx https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx
+sha256sum deploy/models/u2netp/u2netp.onnx   # 309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8
 docker compose -f deploy/docker-compose.yml exec api \
   node apps/api/dist/src/cli/add-model.js /models/u2netp --kind onnx --license Apache-2.0 --entry u2netp.onnx
 ```
