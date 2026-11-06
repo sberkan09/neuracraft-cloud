@@ -14,8 +14,16 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <random>
 #include <regex>
+#include <system_error>
 #include <thread>
+
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 using nc::json::Value;
@@ -38,41 +46,139 @@ bool safeRelative(const std::string& p) {
     return true;
 }
 
-// The cached copy of a blob, downloaded (and checked) when missing.
-std::string cachedBlob(const Http& api, const WorkerSettings& s, const std::string& sha256, const std::string& url) {
-    if (!std::regex_match(sha256, std::regex("[0-9a-f]{64}"))) throw std::runtime_error("bad file hash from the API");
-    const fs::path blob = fs::path(s.cacheDir) / "blobs" / sha256;
-    if (fs::exists(blob)) {
-        fs::last_write_time(blob, fs::file_time_type::clock::now());  // recently used
-        return blob.string();
-    }
-    fs::create_directories(blob.parent_path());
-    const std::string part = blob.string() + ".part";
-    const std::string got = api.download(url, part);
-    if (got != sha256) {
-        fs::remove(part);
-        throw std::runtime_error("download of " + sha256 + " arrived corrupted");
-    }
-    fs::rename(part, blob);
-    return blob.string();
+// Several workers may share one cache folder (docker compose replicas on one volume):
+//   blobs/<sha256>             shared; written once (a private .part file, then link(): never replaced)
+//   assets/<worker id>/<id>/   each worker's links to the blobs, so a model keeps its path from job to
+//                              job and no other worker relinks it under a running job
+// A job holds a shared flock on every blob it uses; trimCache removes only blobs it can lock
+// exclusively, so nobody's file disappears under a running job.
+constexpr auto kStaleDownload = std::chrono::hours(1);   // a .part file this old: its worker died
+constexpr auto kStaleWorker = std::chrono::hours(24);    // links and job folders of a worker gone this long
+
+bool sameFile(int fd, const fs::path& p) {
+    struct stat a {}, b {};
+    return ::fstat(fd, &a) == 0 && ::stat(p.c_str(), &b) == 0 && a.st_ino == b.st_ino && a.st_dev == b.st_dev;
 }
 
-// Drops the least recently used blobs while the cache is over its size.
+// Shared locks on the blobs a job uses, released when the job is done.
+class BlobLocks {
+public:
+    BlobLocks() = default;
+    BlobLocks(const BlobLocks&) = delete;
+    BlobLocks& operator=(const BlobLocks&) = delete;
+    ~BlobLocks() { release(); }
+    void release() {
+        for (int fd : fds_) ::close(fd);
+        fds_.clear();
+    }
+    // Locks the blob at p; false when it is not there (or was removed while we waited for the lock).
+    bool hold(const fs::path& p) {
+        const int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return false;
+        if (::flock(fd, LOCK_SH) != 0 || !sameFile(fd, p)) {
+            ::close(fd);
+            return false;
+        }
+        fds_.push_back(fd);
+        return true;
+    }
+
+private:
+    std::vector<int> fds_;
+};
+
+std::string randomSuffix() {
+    static std::mt19937_64 rng{std::random_device{}()};
+    static std::mutex m;
+    std::lock_guard<std::mutex> lock(m);
+    char buf[17];
+    std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(rng()));
+    return buf;
+}
+
+// The cached copy of a blob, downloaded (and checked) when missing, locked for the job.
+std::string cachedBlob(const Http& api, const WorkerSettings& s, BlobLocks& locks, const std::string& sha256, const std::string& url) {
+    if (!std::regex_match(sha256, std::regex("[0-9a-f]{64}"))) throw std::runtime_error("bad file hash from the API");
+    const fs::path blob = fs::path(s.cacheDir) / "blobs" / sha256;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (locks.hold(blob)) {
+            std::error_code ec;
+            fs::last_write_time(blob, fs::file_time_type::clock::now(), ec);  // recently used
+            return blob.string();
+        }
+        fs::create_directories(blob.parent_path());
+        // Private to this download: other workers may be fetching the same blob right now (and in
+        // containers every worker is pid 1, so the pid alone would not do).
+        const std::string part = blob.string() + ".part." + safeName(s.workerId) + "." + randomSuffix();
+        std::string got;
+        try {
+            got = api.download(url, part);
+        } catch (...) {
+            std::error_code ec;
+            fs::remove(part, ec);
+            throw;
+        }
+        if (got != sha256) {
+            std::error_code ec;
+            fs::remove(part, ec);
+            throw std::runtime_error("download of " + sha256 + " arrived corrupted");
+        }
+        // link() never replaces: if another worker got there first, theirs stays (it may be locked).
+        const int linked = ::link(part.c_str(), blob.c_str()) == 0 ? 0 : errno;
+        std::error_code ec;
+        fs::remove(part, ec);
+        if (linked != 0 && linked != EEXIST) throw std::system_error(linked, std::generic_category(), "caching " + sha256);
+    }
+    throw std::runtime_error("cached copy of " + sha256 + " kept disappearing");
+}
+
+// Drops the least recently used blobs no job is using while the cache is over its size, downloads
+// left behind by a worker that died, and the links and job folders of workers long gone (a worker
+// registers with a new id each time it starts).
 void trimCache(const WorkerSettings& s) {
+    const auto now = fs::file_time_type::clock::now();
     std::vector<std::pair<fs::file_time_type, fs::path>> files;
     unsigned long long total = 0;
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(fs::path(s.cacheDir) / "blobs", ec)) {
-        if (!e.is_regular_file()) continue;
-        total += e.file_size();
-        files.push_back({e.last_write_time(), e.path()});
+        std::error_code fe;
+        if (!e.is_regular_file(fe)) continue;
+        const auto when = e.last_write_time(fe);
+        if (fe) continue;
+        if (e.path().filename().string().find(".part.") != std::string::npos) {
+            if (now - when > kStaleDownload) fs::remove(e.path(), fe);
+            continue;
+        }
+        total += e.file_size(fe);
+        files.push_back({when, e.path()});
     }
     std::sort(files.begin(), files.end());
     for (const auto& [t, p] : files) {
         if (total <= s.cacheMaxBytes) break;
-        total -= fs::file_size(p, ec);
-        fs::remove(p, ec);
+        const int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;  // another worker trimmed it
+        struct stat st {};
+        // In use (a shared lock held by some job) or replaced: leave it.
+        if (::flock(fd, LOCK_EX | LOCK_NB) == 0 && ::fstat(fd, &st) == 0 && sameFile(fd, p) && ::unlink(p.c_str()) == 0)
+            total -= std::min<unsigned long long>(total, static_cast<unsigned long long>(st.st_size));
+        ::close(fd);
     }
+    for (const fs::path& root : {fs::path(s.cacheDir) / "assets", fs::path(s.workDir)})
+        for (const auto& e : fs::directory_iterator(root, ec)) {
+            std::error_code fe;
+            if (e.path().filename() == safeName(s.workerId) || !e.is_directory(fe)) continue;
+            const auto when = e.last_write_time(fe);
+            if (!fe && now - when > kStaleWorker) fs::remove_all(e.path(), fe);
+        }
+}
+
+// This worker's own folder under root (created, and marked as in use).
+fs::path ownFolder(const fs::path& root, const WorkerSettings& s) {
+    const fs::path p = root / safeName(s.workerId);
+    fs::create_directories(p);
+    std::error_code ec;
+    fs::last_write_time(p, fs::file_time_type::clock::now(), ec);
+    return p;
 }
 
 std::string contentType(const std::string& name) {
@@ -125,7 +231,10 @@ std::string errorCode(const std::exception& e) {
 
 void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
     const std::string jobId = str(job, "jobId");
-    const fs::path dir = fs::path(s.workDir) / safeName(jobId);
+    // Under the worker's own folder: a job whose lease ran out may be running on another worker too.
+    const fs::path dir = ownFolder(s.workDir, s) / safeName(jobId);
+    BlobLocks locks;  // held until the job is over
+    std::vector<fs::path> transient;  // links of the job's pictures (only models keep theirs)
     const auto started = std::chrono::steady_clock::now();
     auto seconds = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
 
@@ -166,37 +275,39 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
         beat.join();
         std::error_code ec;
         fs::remove_all(dir, ec);
+        for (const fs::path& p : transient) fs::remove_all(p, ec);
     };
 
     try {
         fs::remove_all(dir);
         fs::create_directories(dir / "out");
         // The job's files, linked under readable names from the cache. The links live in the cache
-        // too (assets/<id>/...), so a model keeps its path from job to job and the engine's model
-        // cache finds it still loaded.
+        // too (assets/<worker id>/<id>/...), so a model keeps its path from job to job and the
+        // engine's model cache finds it still loaded.
         std::map<std::string, std::string> local;  // asset id -> path the workflow gets
-        const fs::path assets = fs::path(s.cacheDir) / "assets";
+        const fs::path assets = ownFolder(fs::path(s.cacheDir) / "assets", s);
         if (const Value* files = job.find("files"))
             for (const Value& f : files->array) {
                 const std::string id = safeName(str(f, "assetId"));
                 const fs::path home = assets / id;
                 std::error_code ec;
-                fs::remove_all(home, ec);  // relinked each time: the blobs may have been trimmed
+                fs::remove_all(home, ec);  // relinked each time: the blobs may have been trimmed (jobs of one worker run one at a time)
                 fs::create_directories(home);
+                if (str(f, "kind") != "model") transient.push_back(home);
                 if (const Value* parts = f.find("files"); parts && !parts->array.empty()) {
                     for (const Value& p : parts->array) {
                         const std::string rel = str(p, "path");
                         if (!safeRelative(rel)) throw std::runtime_error("bad path in a model folder");
                         const fs::path target = home / rel;
                         fs::create_directories(target.parent_path());
-                        fs::create_symlink(cachedBlob(api, s, str(p, "sha256"), str(p, "url")), target);
+                        fs::create_symlink(cachedBlob(api, s, locks, str(p, "sha256"), str(p, "url")), target);
                     }
                     const std::string entry = str(f, "entry");
                     if (!entry.empty() && !safeRelative(entry)) throw std::runtime_error("bad bundle entry");
                     local[str(f, "assetId")] = entry.empty() ? home.string() : (home / entry).string();
                 } else {
                     const fs::path target = home / safeName(str(f, "name"));
-                    fs::create_symlink(cachedBlob(api, s, str(f, "sha256"), str(f, "url")), target);
+                    fs::create_symlink(cachedBlob(api, s, locks, str(f, "sha256"), str(f, "url")), target);
                     local[str(f, "assetId")] = target.string();
                 }
             }
@@ -296,5 +407,6 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
                                      {"workerSeconds", nc::json::makeNumber(used)}}));
         std::cerr << "worker: job " << jobId << " failed (" << code << "): " << e.what() << "\n";
     }
+    locks.release();
     trimCache(s);
 }

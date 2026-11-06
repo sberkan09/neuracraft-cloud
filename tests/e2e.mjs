@@ -56,10 +56,10 @@ const call = async (method, url, body) => {
   const text = await r.text();
   return { status: r.status, body: text ? (r.headers.get("content-type")?.includes("json") ? JSON.parse(text) : text) : null, headers: r.headers };
 };
-const runWorker = () =>
+const runWorker = (extra = {}) =>
   new Promise((resolve) => {
     const w = spawn(workerBin, [], {
-      env: { ...process.env, API_URL: api, WORKER_TOKEN: token, ONCE: "1", CACHE_DIR: path.join(data, "cache"), WORK_DIR: path.join(data, "jobs") },
+      env: { ...process.env, API_URL: api, WORKER_TOKEN: token, ONCE: "1", CACHE_DIR: path.join(data, "cache"), WORK_DIR: path.join(data, "jobs"), ...extra },
       stdio: ["ignore", "inherit", "inherit"],
     });
     w.on("exit", resolve);
@@ -110,12 +110,12 @@ try {
   assert.equal(done3.error.code, "workflow.invalid");
 
   // 4. a catalog model (E2E_U2NETP: a folder with u2netp.onnx and its manifest u2netp.json)
+  let modelId = "";
   if (process.env.E2E_U2NETP) {
     const add = spawn("node", [path.join(root, "apps/api/dist/src/cli/add-model.js"), process.env.E2E_U2NETP, "--kind", "onnx", "--license", "Apache-2.0", "--name", "U2-Net (small)", "--entry", "u2netp.onnx"], {
       env: { ...process.env, STORAGE_DIR: path.join(data, "storage") },
       stdio: ["ignore", "pipe", "inherit"],
     });
-    let modelId = "";
     add.stdout.on("data", (d) => (modelId += d));
     await new Promise((r) => add.on("exit", r));
     modelId = modelId.trim();
@@ -134,6 +134,37 @@ try {
     const cut = Buffer.from(await (await fetch(api + (await call("GET", `/v1/assets/${done4.outputs[0].assetId}/content`)).headers.get("location"))).arrayBuffer());
     assert.equal(cut[25], 6, "an RGBA picture");
   }
+
+  // 5. workers sharing one cache (docker compose replicas on one volume): six users upload the same
+  // picture (one blob), six workers start on an empty cache at once and fetch it together; a tiny
+  // CACHE_MAX_GB makes each trim the cache while the others are still using it.
+  const owner = cookie;
+  const users = [];
+  for (let i = 0; i < 6; i++) {
+    cookie = "";
+    assert.equal((await call("POST", "/v1/auth/signup", { email: `e2e${port}-${i}@example.com`, password: "correct horse battery" })).status, 201);
+    const up = await call("POST", "/v1/assets", { name: "red.png", kind: "input", bytes: pic.length, contentType: "image/png" });
+    assert.equal((await fetch(api + up.body.uploadUrl, { method: "PUT", body: pic, headers: { "content-type": "image/png" } })).status, 200);
+    assert.equal((await call("POST", `/v1/assets/${up.body.asset.id}/complete`)).status, 200);
+    const cut = modelId && i % 2 === 1;
+    const steps = cut
+      ? [{ op: "load", path: `asset:${up.body.asset.id}`, out: "p" }, { op: "onnx", model: `asset:${modelId}`, in: "p", apply: true, out: "o" }, { op: "save", in: "o", path: "o.png" }]
+      : [{ op: "load", path: `asset:${up.body.asset.id}`, out: "p" }, { op: "resize", in: "p", width: 8, height: 6, out: "o" }, { op: "save", in: "o", path: "o.png" }];
+    const j = await call("POST", "/v1/jobs", { workflow: { steps } });
+    assert.equal(j.status, 201, JSON.stringify(j.body));
+    users.push({ cookie, job: j.body.job.id, cut });
+  }
+  const shared = { CACHE_DIR: path.join(data, "shared-cache"), WORK_DIR: path.join(data, "shared-jobs"), CACHE_MAX_GB: "0.000000001" };
+  assert.deepEqual(await Promise.all(users.map(() => runWorker(shared))), users.map(() => 0));
+  for (const u of users) {
+    cookie = u.cookie;
+    const job = (await call("GET", `/v1/jobs/${u.job}`)).body.job;
+    assert.equal(job.state, "succeeded", JSON.stringify(job));
+    const o = Buffer.from(await (await fetch(api + (await call("GET", `/v1/assets/${job.outputs[0].assetId}/content`)).headers.get("location"))).arrayBuffer());
+    if (u.cut) assert.equal(o[25], 6, "an RGBA picture");
+    else assert.deepEqual([o.readUInt32BE(16), o.readUInt32BE(20)], [8, 6]);
+  }
+  cookie = owner;
 
   const me = (await call("GET", "/v1/me")).body;
   assert.ok(me.credits < 50000 && me.credits > 49000, String(me.credits));
