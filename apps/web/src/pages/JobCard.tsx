@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { finishedStates, type Job } from "@neuracraft/shared";
 import { api } from "../api";
 
-export function JobCard({ job, onChange, onFinished }: { job: Job; onChange: (j: Job) => void; onFinished: () => void }) {
+export function JobCard({ job, onChange, onFinished, onOpen }: { job: Job; onChange: (j: Job) => void; onFinished: () => void; onOpen?: (workflow: unknown) => void }) {
   const { t, i18n } = useTranslation();
   const finished = finishedStates.includes(job.state);
 
@@ -59,6 +59,11 @@ export function JobCard({ job, onChange, onFinished }: { job: Job; onChange: (j:
         </div>
       )}
       {job.workerSeconds != null && <small className="muted">{t("job.seconds", { value: fmt.format(job.workerSeconds) })}</small>}
+      {onOpen && job.workflow ? (
+        <button className="ghost" onClick={() => onOpen(job.workflow)}>
+          {t("studio.openInStudio")}
+        </button>
+      ) : null}
     </article>
   );
 }
