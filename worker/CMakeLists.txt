@@ -12,6 +12,7 @@ endif()
 set(NEURACRAFT_COMMIT b317b6c530c73727eb3e23a60ec8d95a2681aca8 CACHE STRING "NeuraCraft commit the worker builds")
 set(NEURACRAFT_DIR "" CACHE PATH "Local NeuraCraft checkout (instead of NEURACRAFT_COMMIT)")
 set(NEURACRAFT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+# -DNEURACRAFT_USE_CUDA=ON builds a GPU worker (the engine's CUDA backend; needs the CUDA toolkit).
 include(FetchContent)
 if(NEURACRAFT_DIR)
     add_subdirectory(${NEURACRAFT_DIR} neuracraft EXCLUDE_FROM_ALL)

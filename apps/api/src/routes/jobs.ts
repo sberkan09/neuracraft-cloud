@@ -52,7 +52,7 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
     const u = await requireUser(s.db, req);
     const plan = planFor(u.plan);
     const checked = await checkSubmittedWorkflow(s.db, u.id, req.body?.workflow, plan.limits);
-    const workerClass = "cpu";
+    const workerClass = checked.workerClass;
     const reserve = cost(workerClass, plan.limits.maxSeconds);
     const row = await tx(s.db, async (c) => {
       await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time

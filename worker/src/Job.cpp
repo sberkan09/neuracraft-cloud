@@ -170,14 +170,18 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
 
     try {
         fs::remove_all(dir);
-        fs::create_directories(dir / "assets");
         fs::create_directories(dir / "out");
-        // The job's files, linked under readable names from the cache.
+        // The job's files, linked under readable names from the cache. The links live in the cache
+        // too (assets/<id>/...), so a model keeps its path from job to job and the engine's model
+        // cache finds it still loaded.
         std::map<std::string, std::string> local;  // asset id -> path the workflow gets
+        const fs::path assets = fs::path(s.cacheDir) / "assets";
         if (const Value* files = job.find("files"))
             for (const Value& f : files->array) {
                 const std::string id = safeName(str(f, "assetId"));
-                const fs::path home = dir / "assets" / id;
+                const fs::path home = assets / id;
+                std::error_code ec;
+                fs::remove_all(home, ec);  // relinked each time: the blobs may have been trimmed
                 fs::create_directories(home);
                 if (const Value* parts = f.find("files"); parts && !parts->array.empty()) {
                     for (const Value& p : parts->array) {
@@ -213,7 +217,7 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
 
         const Value& lim = job.at("limits");
         nc::WorkflowLimits limits;
-        limits.readRoots = {(dir / "assets").string(), s.cacheDir};
+        limits.readRoots = {s.cacheDir};
         limits.writeRoot = (dir / "out").string();
         limits.maxSteps = static_cast<std::size_t>(lim.numberOr("maxSteps", 0));
         limits.maxPixels = static_cast<std::size_t>(lim.numberOr("maxPixels", 0));
