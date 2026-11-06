@@ -51,7 +51,9 @@ try {
     ] } });
     assert.equal(j.status, 201, JSON.stringify(j.body));
     let job;
+    const deadline = Date.now() + 300_000;
     for (;;) {
+      assert.ok(Date.now() < deadline, "the job did not finish in 5 minutes");
       job = (await call("GET", `/v1/jobs/${j.body.job.id}`)).body.job;
       if (["succeeded", "failed", "cancelled"].includes(job.state)) break;
       await new Promise((r) => setTimeout(r, 250));

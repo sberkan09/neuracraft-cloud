@@ -65,3 +65,5 @@ jobs:
         run: docker build -f deploy/api.Dockerfile --target web -t neuracraft-web .
       - name: Worker image
         run: docker build -f deploy/worker.Dockerfile -t neuracraft-worker .
+      - name: GPU worker image (CUDA)
+        run: docker build -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS=86 -t neuracraft-worker-gpu .
