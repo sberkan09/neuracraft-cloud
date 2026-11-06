@@ -137,3 +137,8 @@ input.narrow { width: 80px; }
   .palette { max-height: 220px; }
   .flow, .json { min-height: 60vh; }
 }
+
+/* 3D models */
+.model-view { display: block; width: 260px; height: 260px; border-radius: 10px; background: var(--bg); }
+.model-view.loading { display: grid; place-items: center; font-size: 13px; }
+@media (max-width: 600px) { .model-view { width: 100%; } }

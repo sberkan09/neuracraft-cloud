@@ -66,6 +66,8 @@ const StepNode = memo(function StepNode({ data, selected }: NodeProps<Node<StepD
         <small className="muted">{summary(step)}</small>
         {run?.output?.kind === "image" ? (
           <img className="node-thumb" src={api.content(run.output.assetId)} alt="" loading="lazy" />
+        ) : run?.output?.kind === "model" ? (
+          <span className="state done">{t("model.badge")}</span>
         ) : step.op === "load" && typeof step.path === "string" && step.path.startsWith("asset:") ? (
           <img className="node-thumb" src={api.content(step.path.slice(6))} alt="" loading="lazy" />
         ) : null}

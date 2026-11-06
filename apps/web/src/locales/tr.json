@@ -152,7 +152,8 @@
       "video": "Video",
       "edit": "Düzenle",
       "analysis": "Analiz",
-      "enhance": "İyileştir"
+      "enhance": "İyileştir",
+      "3d": "3D"
     },
     "ops": {
       "load": "Yükle",
@@ -173,7 +174,9 @@
       "parallax": "3D fotoğraf",
       "upscale": "Büyüt",
       "onnx": "ONNX modeli",
-      "interpolate": "Ara kare üret"
+      "interpolate": "Ara kare üret",
+      "depth_mesh": "Derinlikten 3D",
+      "render": "3D görüntü"
     },
     "fields": {
       "amplitude": "Salınım",
@@ -229,20 +232,29 @@
       "weight": "Ağırlık",
       "width": "Genişlik",
       "zoom": "Yakınlaşma",
-      "zoom_in": "İçeri doğru"
+      "zoom_in": "İçeri doğru",
+      "grid": "Izgara",
+      "depth": "Kabartma",
+      "edges": "Kenar kesme",
+      "turn": "Dönüş",
+      "yaw": "Açı",
+      "pitch": "Kamera yüksekliği",
+      "fov": "Görüş açısı",
+      "background": "Arka plan",
+      "lighting": "Işıklandırma"
     },
     "problem": {
       "required": "Adım {{step}}: {{field}} gerekli.",
       "clip": "Adım {{step}}: {{field}} “{{clip}}” klibini okuyor, ama önceki adımlardan hiçbiri onu üretmiyor.",
       "file": "Adım {{step}}: {{field}} için dosyalarından birini seç.",
       "folder": "Adım {{step}}: {{field}} bulutta henüz kullanılamıyor.",
-      "saveName": "Adım {{step}}: dosyaya sonuc.png gibi bir ad ver (png, jpg, gif ya da mov).",
+      "saveName": "Adım {{step}}: dosyaya sonuc.png gibi bir ad ver (png, jpg, gif, mov; 3D model için glb / obj / ply).",
       "noSave": "Bir Kaydet adımı ekle: yalnızca kaydedilen sonuçlar saklanır.",
       "unknownOp": "Adım {{step}}: bu işlem kullanılamıyor."
     },
     "docs": {
-      "load": "Dosyalarından bir resim",
-      "save": "Bir sonucu indirebileceğin bir dosya olarak saklar: resim için .png ya da .jpg, klip için .gif ya da .mov",
+      "load": "Dosyalarından bir resim ya da 3D model",
+      "save": "Bir sonucu indirebileceğin bir dosya olarak saklar: resim için .png ya da .jpg, klip için .gif ya da .mov, 3D model için .glb",
       "resize": "Her kareyi ölçekler",
       "crop": "Ortadan kırpar (önce kaplayacak kadar ölçekler)",
       "concat": "Klipleri arka arkaya ekler",
@@ -259,7 +271,15 @@
       "parallax": "Tek resimden ve derinliğinden hareketli kamera klibi",
       "upscale": "Real-ESRGAN ile çözünürlük artırma",
       "onnx": "ONNX'e aktarılmış bir resim modeli: arka plan silme, derinlik, büyütme, onarım, stil",
-      "interpolate": "RIFE ile ara kareler (her geçiş kare hızını iki katına çıkarır)"
+      "interpolate": "RIFE ile ara kareler (her geçiş kare hızını iki katına çıkarır)",
+      "depth_mesh": "Bir resmin derinliğiyle yükseltilip resmin kendisiyle kaplanan 3D kabartması",
+      "render": "Bir 3D modelin görüntüleri: tek kare ya da dönen bir klip"
     }
+  },
+  "model": {
+    "loading": "3D görüntüleyici yükleniyor…",
+    "unavailable": "3D görüntüleyici yüklenemedi; modeli indirip açabilirsin.",
+    "download": "{{name}} dosyasını indir",
+    "badge": "3D model"
   }
 }

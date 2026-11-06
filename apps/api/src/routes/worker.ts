@@ -2,6 +2,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { CompleteRequest, FailRequest, HeartbeatRequest, UploadRequest, WorkerCapabilities, WorkerClaimRequest } from "@neuracraft/shared";
+import { outputKind } from "@neuracraft/shared";
 import type { Services } from "../app.js";
 import { tx } from "../db.js";
 import { fail } from "../errors.js";
@@ -9,7 +10,7 @@ import { publish } from "../events.js";
 import { settleJob } from "../ledger.js";
 import { cost } from "../plans.js";
 import { claim, LEASE_SECONDS } from "../scheduler.js";
-import { OUTPUT_NAME } from "../workflow.js";
+import { OUTPUT_FILE } from "../workflow.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_OUTPUT = 2 * 1024 ** 3;
@@ -80,7 +81,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     if (outputs.length > 64) fail(400, "request.invalid");
     return {
       uploads: outputs.map((o, i) => {
-        if (!OUTPUT_NAME.test(o.name) || !(o.bytes > 0) || o.bytes > MAX_OUTPUT) fail(400, "request.invalid", { output: o.name });
+        if (!OUTPUT_FILE.test(o.name) || !(o.bytes > 0) || o.bytes > MAX_OUTPUT) fail(400, "request.invalid", { output: o.name });
         const key = `uploads/${req.params.id}/${i}-${o.name}`;
         return { name: o.name, key, url: s.storage.uploadUrl(key, o.bytes, 3600) };
       }),
@@ -94,7 +95,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     const prefix = `uploads/${req.params.id}/`;
     const stored: (CompleteRequest["outputs"][number] & { sha256: string; bytes: number })[] = [];
     for (const o of body.outputs ?? []) {
-      if (!o.key?.startsWith(prefix) || !OUTPUT_NAME.test(o.name)) fail(400, "request.invalid");
+      if (!o.key?.startsWith(prefix) || !OUTPUT_FILE.test(o.name)) fail(400, "request.invalid");
       stored.push({ ...o, ...(await s.storage.finalize(o.key)) });
     }
     const seconds = Math.max(0, Number(body.workerSeconds) || 0);
@@ -106,7 +107,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
           [j.user_id, o.name, String(o.contentType ?? "application/octet-stream").slice(0, 100), o.sha256, o.bytes],
         );
         await c.query("INSERT INTO job_outputs (job_id, name, asset_id) VALUES ($1, $2, $3)", [req.params.id, o.name, a.rows[0]!.id]);
-        await publish(c, req.params.id, { type: "output", output: { name: o.name, assetId: a.rows[0]!.id, kind: o.contentType.startsWith("image/") ? "image" : o.contentType.startsWith("video/") ? "video" : "file", bytes: o.bytes } });
+        await publish(c, req.params.id, { type: "output", output: { name: o.name, assetId: a.rows[0]!.id, kind: outputKind(String(o.contentType ?? "")), bytes: o.bytes } });
       }
       await c.query(
         `UPDATE jobs SET state = 'succeeded', finished_at = now(), worker_seconds = $2, lease_until = NULL,

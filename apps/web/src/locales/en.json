@@ -152,7 +152,8 @@
       "video": "Video",
       "edit": "Edit",
       "analysis": "Analysis",
-      "enhance": "Enhance"
+      "enhance": "Enhance",
+      "3d": "3D"
     },
     "ops": {
       "load": "Load",
@@ -173,7 +174,9 @@
       "parallax": "3D photo",
       "upscale": "Upscale",
       "onnx": "ONNX model",
-      "interpolate": "Interpolate"
+      "interpolate": "Interpolate",
+      "depth_mesh": "Depth to 3D",
+      "render": "Render 3D"
     },
     "fields": {
       "amplitude": "Amplitude",
@@ -229,20 +232,29 @@
       "weight": "Weight",
       "width": "Width",
       "zoom": "Zoom",
-      "zoom_in": "Zoom in"
+      "zoom_in": "Zoom in",
+      "grid": "Grid",
+      "depth": "Relief",
+      "edges": "Edge cut",
+      "turn": "Turn",
+      "yaw": "Angle",
+      "pitch": "Camera height",
+      "fov": "Field of view",
+      "background": "Background",
+      "lighting": "Lighting"
     },
     "problem": {
       "required": "Step {{step}}: {{field}} is needed.",
       "clip": "Step {{step}}: {{field}} reads “{{clip}}”, which no earlier step makes.",
       "file": "Step {{step}}: choose {{field}} from your files.",
       "folder": "Step {{step}}: {{field}} cannot be used in the cloud yet.",
-      "saveName": "Step {{step}}: name the file like result.png (png, jpg, gif or mov).",
+      "saveName": "Step {{step}}: name the file like result.png (png, jpg, gif, mov, or glb / obj / ply for a 3D model).",
       "noSave": "Add a Save step: only saved results are kept.",
       "unknownOp": "Step {{step}}: this operation is not available."
     },
     "docs": {
-      "load": "A picture from your files",
-      "save": "Keeps a result as a file you can download: .png or .jpg for a picture, .gif or .mov for a clip",
+      "load": "A picture or a 3D model from your files",
+      "save": "Keeps a result as a file you can download: .png or .jpg for a picture, .gif or .mov for a clip, .glb for a 3D model",
       "resize": "Scales every frame",
       "crop": "Centre crop (scaled to cover first)",
       "concat": "Clips one after another",
@@ -259,7 +271,15 @@
       "parallax": "A moving-camera clip from one picture and its depth",
       "upscale": "Real-ESRGAN super-resolution",
       "onnx": "An image model exported to ONNX: background removal, depth, upscaling, restoration, style",
-      "interpolate": "RIFE in-between frames (each pass doubles the frame rate)"
+      "interpolate": "RIFE in-between frames (each pass doubles the frame rate)",
+      "depth_mesh": "A 3D relief of a picture, raised by its depth and textured with it",
+      "render": "Pictures of a 3D model: a still, or a turntable clip"
     }
+  },
+  "model": {
+    "loading": "Loading the 3D viewer…",
+    "unavailable": "The 3D viewer could not be loaded; download the model instead.",
+    "download": "Download {{name}}",
+    "badge": "3D model"
   }
 }

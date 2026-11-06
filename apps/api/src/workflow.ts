@@ -8,7 +8,10 @@ import { fail } from "./errors.js";
 
 const ASSET = /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const LORA = /^(asset:[0-9a-f-]{36})(:[0-9]*\.?[0-9]+)?$/;
-export const OUTPUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(png|jpe?g|gif|mov)$/;
+// A save names its output file: pictures and clips, or 3D models.
+export const OUTPUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(png|jpe?g|gif|mov|glb|obj|ply)$/;
+// What a worker may upload: the saves, and the files an OBJ save writes next to it (.mtl, a texture).
+export const OUTPUT_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,72}\.(png|jpe?g|gif|mov|glb|obj|ply|mtl)$/;
 const STEP_EXTRAS = new Set(["op", "out", "ui", "label", "comment"]);
 const GENERATION = new Set(["txt2img", "img2img", "inpaint", "t2v", "morph", "zoom", "outpaint"]);
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);

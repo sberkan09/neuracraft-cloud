@@ -11,9 +11,16 @@ import { FieldInput, modelsFor, useFieldLabel } from "./FieldInput";
 import { GraphCanvas } from "./GraphCanvas";
 import { freeSpot, nodeRuns, outName, stepId, topoSort, upstream, withLayout, type Ops, type Step, type Workflow } from "./graph";
 
-const GROUPS = ["input", "image", "video", "edit", "analysis", "enhance"];
+const GROUPS = ["input", "image", "video", "3d", "edit", "analysis", "enhance"];
 const DRAFT = "nc.studio.draft";
 const VIDEO_OPS = new Set(["t2v", "morph", "zoom", "outpaint", "parallax", "interpolate"]);
+// What a step makes, for naming its save: a 3D model, a clip of several frames, or a picture.
+function kindOf(s: Step | undefined, ops: Ops): "picture" | "video" | "model" {
+  if (!s) return "picture";
+  if (ops.get(s.op)?.makes === "mesh") return "model";
+  if (VIDEO_OPS.has(s.op) || (s.op === "render" && Number(s.frames ?? 1) > 1)) return "video";
+  return "picture";
+}
 
 export function loadDraft(): Workflow {
   try {
@@ -126,7 +133,7 @@ export function Studio(props: { workflow: Workflow; onWorkflow(wf: Workflow): vo
       if (f.name === "in" && f.type === "clips" && lastClip) s.in = [outName(lastClip)];
     }
     if (opName === "load" && pictures[0]) s.path = `asset:${pictures[0].id}`;
-    if (opName === "save") s.path = saveFileFor(String(s.in ?? "result"), !!lastClip && VIDEO_OPS.has(lastClip.op));
+    if (opName === "save") s.path = saveFileFor(String(s.in ?? "result"), kindOf(lastClip, ops));
     const at = before.length;
     const anchor = steps[Math.min(selected, steps.length - 1)]?.ui;
     s.ui = freeSpot(steps, anchor ? anchor.x + 300 : 40, anchor ? anchor.y : 40);
@@ -158,8 +165,8 @@ export function Studio(props: { workflow: Workflow; onWorkflow(wf: Workflow): vo
         const keep = upstream(steps, ops, upTo).filter((k) => k === upTo || steps[k]!.op !== "save").map((k) => steps[k]!);
         const target = steps[upTo]!;
         if (target.op !== "save" && ops.get(target.op)?.output) {
-          const video = keep.some((s) => VIDEO_OPS.has(s.op));
-          keep.push({ op: "save", in: outName(target), path: saveFileFor(outName(target), video) });
+          const kind = kindOf(target, ops) === "model" ? "model" : keep.some((s) => kindOf(s, ops) === "video") ? "video" : "picture";
+          keep.push({ op: "save", in: outName(target), path: saveFileFor(outName(target), kind) });
         }
         wf = { ...workflow, steps: keep };
       }

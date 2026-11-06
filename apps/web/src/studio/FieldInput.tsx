@@ -137,6 +137,7 @@ export function FieldInput(props: {
         </div>
       );
     case "clip":
+    case "mesh":
       return (
         <label htmlFor={id}>
           {head}

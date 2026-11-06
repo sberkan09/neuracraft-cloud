@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { finishedStates, type Job } from "@neuracraft/shared";
 import { api } from "../api";
+import { ModelView } from "../ModelView";
 
 export function JobCard({ job, onChange, onFinished, onOpen }: { job: Job; onChange: (j: Job) => void; onFinished: () => void; onOpen?: (workflow: unknown) => void }) {
   const { t, i18n } = useTranslation();
@@ -50,12 +51,21 @@ export function JobCard({ job, onChange, onFinished, onOpen }: { job: Job; onCha
       {job.error && <p className="error">{t(`errors.${job.error.code}`, { reason: job.error.detail ?? "", defaultValue: job.error.detail ?? job.error.code })}</p>}
       {job.outputs.length > 0 && (
         <div className="outputs">
-          {job.outputs.map((o) => (
-            <a key={o.assetId} href={api.content(o.assetId)} target="_blank" rel="noreferrer" className="output">
-              {o.kind === "image" ? <img src={api.content(o.assetId)} alt={o.name} /> : <span>{o.name}</span>}
-              <small>{t("home.download")}</small>
-            </a>
-          ))}
+          {job.outputs.map((o) =>
+            o.kind === "model" ? (
+              <div key={o.assetId} className="output">
+                <ModelView src={api.content(o.assetId)} label={o.name} />
+                <a href={api.content(o.assetId)} download={o.name}>
+                  <small>{t("model.download", { name: o.name })}</small>
+                </a>
+              </div>
+            ) : (
+              <a key={o.assetId} href={api.content(o.assetId)} target="_blank" rel="noreferrer" className="output">
+                {o.kind === "image" ? <img src={api.content(o.assetId)} alt={o.name} /> : <span>{o.name}</span>}
+                <small>{t("home.download")}</small>
+              </a>
+            ),
+          )}
         </div>
       )}
       {job.workerSeconds != null && <small className="muted">{t("job.seconds", { value: fmt.format(job.workerSeconds) })}</small>}
