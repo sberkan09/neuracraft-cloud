@@ -64,7 +64,9 @@ describe("assets", () => {
     const r = await inject({ method: "POST", url: "/v1/assets", headers: { cookie: a.cookie }, payload: { name: "x.png", kind: "input", bytes: 4 } });
     const put = await inject({ method: "PUT", url: local(json(r).uploadUrl), payload: Buffer.alloc(100), headers: { "content-type": "application/octet-stream" } });
     assert.equal(put.statusCode, 413);
-    const forged = local(json(r).uploadUrl).replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+    // (not the last character: in base64 it may hold only padding bits, and changing it changes nothing)
+    const url = local(json(r).uploadUrl), at = url.length - 6;
+    const forged = url.slice(0, at) + (url[at] === "A" ? "B" : "A") + url.slice(at + 1);
     assert.equal((await inject({ method: "PUT", url: forged, payload: Buffer.alloc(2), headers: { "content-type": "application/octet-stream" } })).statusCode, 403);
     const model = await inject({ method: "POST", url: "/v1/assets", headers: { cookie: a.cookie }, payload: { name: "m.ckpt", kind: "model", bytes: 10, license: "x" } });
     assert.equal(json(model).error.code, "model.unsupported");
@@ -88,6 +90,12 @@ describe("jobs", () => {
     assert.equal(await code({ steps: [{ op: "load", path: "/etc/passwd" }] }), "workflow.path_not_allowed");
     assert.equal(await code({ steps: [{ op: "load", path: "asset:../../x" }] }), "workflow.path_not_allowed");
     assert.equal(await code({ steps: [{ op: "save", in: "p", path: "../out.png" }] }), "workflow.path_not_allowed");
+    assert.equal(await code({ steps: [{ op: "save", in: "p", path: "model.exe" }] }), "workflow.path_not_allowed");
+    // 3D models are saved as .glb / .obj / .ply.
+    const mine = await uploadPicture(h.app, a.cookie);
+    const glb = await post({ steps: [{ op: "load", path: `asset:${mine}`, out: "p" }, { op: "save", in: "p", path: "model.glb" }] });
+    assert.equal(glb.statusCode, 201, glb.body);
+    await inject({ method: "POST", url: `/v1/jobs/${json(glb).job.id}/cancel`, headers: { cookie: a.cookie } });
     assert.equal(await code({ steps: [{ op: "rm", path: "x" }] }), "workflow.invalid");
     assert.equal(await code({ steps: [{ op: "resize", in: "p", widht: 3 }] }), "workflow.invalid");
     assert.equal(await code(resize(theirs)), "workflow.asset_missing");

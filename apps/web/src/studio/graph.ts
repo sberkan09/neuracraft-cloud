@@ -18,7 +18,8 @@ export type Ops = Map<string, EngineOp>;
 let counter = 0;
 const newId = () => `n${Date.now().toString(36)}${(counter++).toString(36)}`;
 
-export const clipFields = (op?: EngineOp) => (op ? op.fields.filter((f) => f.type === "clip" || f.type === "clips") : []);
+// Fields that read what another step made: clips, and 3D models (they share the clips' names).
+export const clipFields = (op?: EngineOp) => (op ? op.fields.filter((f) => f.type === "clip" || f.type === "clips" || f.type === "mesh") : []);
 export const outName = (s: Step) => String(s.out ?? s.op);
 export const stepId = (s: Step) => String(s.ui?.id ?? "");
 const names = (v: unknown) => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);

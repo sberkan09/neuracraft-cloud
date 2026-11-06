@@ -4,7 +4,7 @@ import schema from "./engine-schema.json" with { type: "json" };
 
 export interface EngineField {
   name: string;
-  type: string; // int, float, bool, string, text, enum, clip, clips, model, loras, file, dir, strings, ints, keyframes
+  type: string; // int, float, bool, string, text, enum, clip, clips, mesh, model, loras, file, dir, strings, ints, keyframes
   doc: string;
   required: boolean;
   default?: unknown;
@@ -19,6 +19,7 @@ export interface EngineOp {
   group: string;
   doc: string;
   output: boolean;
+  makes?: string; // "clip", "mesh", or "any" (load: by the file)
   fields: EngineField[];
 }
 export interface EngineSchema {

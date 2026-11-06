@@ -14,8 +14,16 @@ export interface JobLimits {
 export interface JobOutput {
   name: string; // the clip or file name the workflow gave it
   assetId: string;
-  kind: "image" | "video" | "file";
+  kind: "image" | "video" | "model" | "file";
   bytes: number;
+}
+
+// What an output is, from its content type: pictures and clips, 3D models (glTF binary), other files.
+export function outputKind(contentType: string): JobOutput["kind"] {
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType.startsWith("video/")) return "video";
+  if (contentType === "model/gltf-binary") return "model";
+  return "file";
 }
 
 export interface Job {

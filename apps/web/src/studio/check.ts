@@ -12,7 +12,7 @@ export interface Problem {
 export const ASSET = /^asset:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const LORA = /^asset:[0-9a-f-]{36}(:[0-9]*\.?[0-9]+)?$/;
 // The API's rule for save names (apps/api/src/workflow.ts OUTPUT_NAME).
-export const OUTPUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(png|jpe?g|gif|mov)$/;
+export const OUTPUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(png|jpe?g|gif|mov|glb|obj|ply)$/;
 
 const empty = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 
@@ -33,7 +33,7 @@ export function checkWorkflow(wf: Workflow, ops: Ops): Problem[] {
         continue;
       }
       if (empty(v)) continue;
-      if (f.type === "clip" || f.type === "clips")
+      if (f.type === "clip" || f.type === "clips" || f.type === "mesh")
         for (const c of Array.isArray(v) ? v.map(String) : [String(v)]) if (!made.has(c)) problems.push({ step: i, code: "clip", field: f.name, clip: c });
       if (op.name === "save" && f.name === "path") {
         if (!OUTPUT_NAME.test(String(v))) problems.push({ step: i, code: "saveName", field: f.name });
@@ -54,10 +54,10 @@ export function checkWorkflow(wf: Workflow, ops: Ops): Problem[] {
 // Clips made before step i (what its clip fields can read).
 export const clipsBefore = (steps: Step[], ops: Ops, i: number) => steps.slice(0, i).filter((s) => ops.get(s.op)?.output).map(outName);
 
-// A save file name for a clip: safe characters, .gif for clips of several frames.
-export function saveFileFor(clip: string, video: boolean): string {
+// A save file name for a clip or a 3D model: safe characters; .gif for clips of several frames, .glb for models.
+export function saveFileFor(clip: string, kind: "picture" | "video" | "model"): string {
   const base = clip.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^[^A-Za-z0-9]+/, "").slice(0, 56) || "result";
-  return `${base}.${video ? "gif" : "png"}`;
+  return `${base}.${kind === "model" ? "glb" : kind === "video" ? "gif" : "png"}`;
 }
 
 export { clipFields };

@@ -78,7 +78,8 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
   machine that vanished costs a retry, never a lost job.
 * **Cancellation**: the heartbeat answer says "cancel"; the worker's `WorkflowEvents::cancelled`
   returns true and the engine stops between denoising steps or frames.
-* **Results** are assets owned by the job's user.
+* **Results** are assets owned by the job's user: pictures and clips, and 3D models (`.glb` is shown in
+  a 3D viewer in the browser; `.obj` comes with its `.mtl` and texture, `.ply` with vertex colours).
 
 ## Worker protocol (HTTP + JSON, `Authorization: Bearer <worker token>`)
 

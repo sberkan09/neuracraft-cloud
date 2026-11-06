@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Job, JobEvent } from "@neuracraft/shared";
+import { outputKind, type Job, type JobEvent } from "@neuracraft/shared";
 import type { Services } from "../app.js";
 import { requireUser } from "../auth.js";
 import { tx } from "../db.js";
@@ -39,7 +39,7 @@ async function jobJson(s: Services, row: JobRow): Promise<Job> {
     outputs: outs.rows.map((o) => ({
       name: o.name,
       assetId: o.asset_id,
-      kind: o.content_type.startsWith("image/") ? "image" : o.content_type.startsWith("video/") ? "video" : "file",
+      kind: outputKind(o.content_type),
       bytes: Number(o.bytes),
     })),
     error: row.error,
