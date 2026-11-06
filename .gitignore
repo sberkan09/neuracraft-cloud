@@ -5,3 +5,4 @@ build/
 *.log
 .data/
 worker/build/
+worker/bin/

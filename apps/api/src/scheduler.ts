@@ -43,8 +43,8 @@ export async function claim(db: Db, storage: Storage, workerId: string, workerCl
 
 async function claimedFiles(db: Db, storage: Storage, ids: string[]): Promise<ClaimedFile[]> {
   if (!ids.length) return [];
-  const assets = await db.query<{ id: string; kind: string; sha256: string | null; bytes: string }>(
-    "SELECT id, kind, sha256, bytes FROM assets WHERE id = ANY($1::uuid[])",
+  const assets = await db.query<{ id: string; kind: string; name: string; sha256: string | null; bytes: string; entry: string | null }>(
+    "SELECT id, kind, name, sha256, bytes, entry FROM assets WHERE id = ANY($1::uuid[])",
     [ids],
   );
   const files = await db.query<{ asset_id: string; path: string; sha256: string; bytes: string }>(
@@ -56,11 +56,13 @@ async function claimedFiles(db: Db, storage: Storage, ids: string[]): Promise<Cl
     const parts = files.rows.filter((f) => f.asset_id === a.id);
     const out: ClaimedFile = {
       assetId: a.id,
+      name: a.name,
       sha256: a.sha256 ?? "",
       bytes: Number(a.bytes),
       url: a.sha256 ? storage.downloadUrl(blobKey(a.sha256), hour) : "",
       kind: a.kind === "model" ? "model" : "input",
     };
+    if (a.entry) out.entry = a.entry;
     if (parts.length)
       out.files = parts.map((f) => ({ path: f.path, sha256: f.sha256, bytes: Number(f.bytes), url: storage.downloadUrl(blobKey(f.sha256), hour) }));
     return out;

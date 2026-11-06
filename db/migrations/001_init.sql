@@ -38,6 +38,7 @@ CREATE TABLE assets (
     sha256       text REFERENCES blobs(sha256),    -- null for a bundle or while uploading
     bytes        bigint NOT NULL DEFAULT 0,
     license      text,                             -- declared by the uploader / recorded for the catalog
+    entry        text,                             -- a bundle's file the workflow names (an .onnx next to its manifest); null: the folder
     status       text NOT NULL DEFAULT 'ready' CHECK (status IN ('uploading', 'ready', 'held', 'removed')),
     created_at   timestamptz NOT NULL DEFAULT now()
 );

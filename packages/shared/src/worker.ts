@@ -22,12 +22,14 @@ export interface WorkerClaimRequest {
 
 export interface ClaimedFile {
   assetId: string; // the workflow names it "asset:<id>"
+  name: string; // the file name (its extension tells the engine what it is)
   sha256: string;
   bytes: number;
   url: string; // signed GET
   kind: "model" | "input";
   // A model folder (diffusers layout) is an archive of files: each with its path inside the folder.
   files?: { path: string; sha256: string; bytes: number; url: string }[];
+  entry?: string; // the bundle file the workflow gets (else the folder)
 }
 
 export interface ClaimedJob {
