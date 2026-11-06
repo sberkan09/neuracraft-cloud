@@ -11,9 +11,17 @@ export const LEASE_SECONDS = 30;
 export const MAX_ATTEMPTS = 3;
 
 // The next job for a worker of `workerClass` holding `loaded` models, or null. Claims are serialised
-// (a transaction-wide advisory lock) so per-user concurrency holds exactly.
+// (a transaction-wide advisory lock) so per-user concurrency holds exactly. A GPU worker takes GPU
+// jobs first and CPU jobs when there are none; a CPU worker takes GPU jobs only while no GPU worker
+// has been seen for GPU_GRACE_SECONDS (so they still run, slowly, without a GPU in the pool).
+export const GPU_GRACE_SECONDS = 60;
 export async function claim(db: Db, storage: Storage, workerId: string, workerClass: string, loaded: string[]): Promise<ClaimedJob | null> {
   const concurrency = Object.fromEntries(Object.entries(plans).map(([k, p]) => [k, p.concurrentJobs]));
+  let classes = workerClass === "gpu" ? ["gpu", "cpu"] : ["cpu"];
+  if (workerClass === "cpu") {
+    const gpus = await db.query("SELECT 1 FROM workers WHERE class = 'gpu' AND last_seen_at > now() - make_interval(secs => $1) LIMIT 1", [GPU_GRACE_SECONDS]);
+    if (!gpus.rowCount) classes = ["cpu", "gpu"];
+  }
   const job = await tx(db, async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(727002)");
     const r = await c.query<{ id: string; workflow: unknown; limits: JobLimits; files: string[] }>(
@@ -21,12 +29,12 @@ export async function claim(db: Db, storage: Storage, workerId: string, workerCl
        SELECT j.id, j.workflow, j.limits, j.files FROM jobs j
          JOIN users u ON u.id = j.user_id
          LEFT JOIN busy b ON b.user_id = j.user_id
-        WHERE j.state = 'queued' AND j.worker_class = $1 AND NOT j.cancel
+        WHERE j.state = 'queued' AND j.worker_class = ANY($4::text[]) AND NOT j.cancel
           AND coalesce(b.n, 0) < coalesce(($3::jsonb ->> u.plan)::int, 1)
-        ORDER BY j.priority DESC, coalesce(b.n, 0), (j.models <@ $2::uuid[]) DESC, j.created_at
+        ORDER BY (j.worker_class = $1) DESC, j.priority DESC, coalesce(b.n, 0), (j.models <@ $2::uuid[]) DESC, j.created_at
         LIMIT 1
           FOR UPDATE OF j SKIP LOCKED`,
-      [workerClass, loaded, JSON.stringify(concurrency)],
+      [workerClass, loaded, JSON.stringify(concurrency), classes],
     );
     const row = r.rows[0];
     if (!row) return null;

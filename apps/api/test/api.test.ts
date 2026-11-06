@@ -186,6 +186,28 @@ describe("jobs", () => {
     assert.equal(credits, 50000 - 5000);
   });
 
+  it("sends diffusion jobs to GPU workers, and to CPU workers only while there is no GPU", async () => {
+    const a = await signUp(h.app);
+    const pic = await uploadPicture(h.app, a.cookie);
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");  // earlier tests' leftovers
+    const gen = json(await inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: { steps: [{ op: "upscale", in: "p" }] } } }));
+    assert.ok(gen.job, JSON.stringify(gen));
+    const cpu = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "cpu" } })).workerId;
+    const gpu = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu" } })).workerId;
+    const take = async (id: string) => json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId: id, waitSeconds: 0 } })).job?.jobId ?? null;
+    assert.equal(await take(cpu), null, "a GPU worker is around: the CPU worker leaves the GPU job");
+    assert.equal(await take(gpu), gen.job.id);
+    await inject({ method: "POST", url: `/v1/worker/jobs/${gen.job.id}/fail`, headers: worker, payload: { workerId: gpu, code: "internal", workerSeconds: 0 } });
+    // a GPU worker also takes CPU work
+    const plain = json(await inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: resize(pic) } })).job.id;
+    assert.equal(await take(gpu), plain);
+    await inject({ method: "POST", url: `/v1/worker/jobs/${plain}/fail`, headers: worker, payload: { workerId: gpu, code: "internal", workerSeconds: 0 } });
+    // with no GPU seen lately, CPU workers take GPU jobs
+    const gen2 = json(await inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: { steps: [{ op: "upscale", in: "p" }] } } })).job.id;
+    await h.s.db.query("UPDATE workers SET last_seen_at = now() - interval '10 minutes' WHERE class = 'gpu'");
+    assert.equal(await take(cpu), gen2);
+  });
+
   it("requeues jobs whose worker vanished, and fails them after three attempts", async () => {
     const { reapLeases } = await import("../src/scheduler.js");
     const a = await signUp(h.app);

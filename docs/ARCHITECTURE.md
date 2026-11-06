@@ -47,6 +47,14 @@ changes.
   `WorkflowLimits` (files only in the job's folders, bounded size and time), upload the outputs to
   signed URLs and report progress. A worker runs one job at a time per device and keeps recently
   used models loaded.
+* **GPU workers** — the same worker built with the engine's CUDA backend
+  (`deploy/worker-gpu.Dockerfile`, `WORKER_CLASS=gpu`). Jobs with diffusion steps (txt2img, img2img,
+  inpaint, t2v, morph, zoom, outpaint, upscale, interpolate) are GPU jobs; a GPU worker takes them
+  first and CPU jobs when there are none, and CPU workers take GPU jobs only while no GPU worker has
+  been seen for a minute (slow, but nothing waits forever). GPU time is billed at the GPU rate.
+* **Warm models** — a worker keeps the models of its last jobs loaded (`KEEP_MODELS`, default 2),
+  their weights resident in GPU memory, and reports them when it asks for work; the scheduler then
+  prefers jobs that need those models.
 * **Autoscaler** (later) — watches queue depth per worker class and starts or stops machines
   through the providers' APIs (Hetzner, Runpod). Workers are cattle: any can die at any moment.
 

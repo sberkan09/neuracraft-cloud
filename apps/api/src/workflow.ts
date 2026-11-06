@@ -13,7 +13,11 @@ const STEP_EXTRAS = new Set(["op", "out", "ui", "label", "comment"]);
 const GENERATION = new Set(["txt2img", "img2img", "inpaint", "t2v", "morph", "zoom", "outpaint"]);
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 
+// Operations that run diffusion models: these jobs go to GPU workers (when there are any).
+export const GPU_OPS = new Set(["txt2img", "img2img", "inpaint", "t2v", "morph", "zoom", "outpaint", "upscale", "interpolate"]);
+
 export interface CheckedWorkflow {
+  workerClass: "cpu" | "gpu";
   workflow: { steps: Record<string, unknown>[] } & Record<string, unknown>;
   files: string[]; // asset ids it reads
   models: string[]; // the model assets among them
@@ -74,6 +78,7 @@ export async function checkSubmittedWorkflow(db: Db, userId: string, input: unkn
     }
   }
   return {
+    workerClass: list.some((st) => GPU_OPS.has(String((st as Record<string, unknown>).op))) ? "gpu" : "cpu",
     workflow: wf as CheckedWorkflow["workflow"],
     files: ids,
     models: ids.filter((id) => refs.get(id) === "model"),

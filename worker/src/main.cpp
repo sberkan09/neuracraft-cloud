@@ -2,13 +2,17 @@
 //
 //   API_URL=http://localhost:8080 WORKER_TOKEN=... neuracraft-worker
 //
-// Environment: API_URL, WORKER_TOKEN (required); WORKER_CLASS (cpu), CACHE_DIR (.data/cache),
-// WORK_DIR (.data/jobs), CACHE_MAX_GB (20), ONCE=1 (run at most one job, then exit: tests).
+// Environment: API_URL, WORKER_TOKEN (required); WORKER_CLASS (cpu, or gpu: runs on the GPU and
+// fails to start without one), CACHE_DIR (.data/cache), WORK_DIR (.data/jobs), CACHE_MAX_GB (20),
+// KEEP_MODELS (2: models kept loaded between jobs), ONCE=1 (at most one job, then exit: tests).
 #include "Http.h"
 #include "Job.h"
 
+#include "Backend.h"
 #include "Json.h"
+#include "ModelCache.h"
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -16,6 +20,7 @@
 #include <iostream>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 volatile std::sig_atomic_t stopping = 0;
@@ -41,15 +46,27 @@ int main() {
     std::filesystem::create_directories(s.cacheDir);
     std::filesystem::create_directories(s.workDir);
     const bool once = env("ONCE") == "1";
+    const std::string workerClass = env("WORKER_CLASS", "cpu");
+    if (workerClass == "gpu" && !nc::setDevice(nc::Device::GPU)) {
+        std::cerr << "neuracraft-worker: WORKER_CLASS=gpu, but no GPU is available (" << nc::gpuBackendName() << ")\n";
+        return 2;
+    }
+    // Models (and their GPU copies) stay loaded from job to job; the most recent few survive.
+    const nc::ModelCacheScope modelCache;
+    nc::setModelCacheKeep(static_cast<std::size_t>(std::stoul(env("KEEP_MODELS", "2"))));
+    const nc::GpuWeightScope gpuWeights;
 
     using nc::json::makeNumber;
     using nc::json::makeString;
     const long cores = sysconf(_SC_NPROCESSORS_ONLN);
     const double memory = static_cast<double>(sysconf(_SC_PHYS_PAGES)) * static_cast<double>(sysconf(_SC_PAGE_SIZE));
-    const std::string caps = nc::json::dump(nc::json::makeObject({{"class", makeString(env("WORKER_CLASS", "cpu"))},
-                                                                  {"cores", makeNumber(static_cast<double>(cores))},
-                                                                  {"memoryBytes", makeNumber(memory)},
-                                                                  {"engineVersion", makeString(NEURACRAFT_WORKER_ENGINE)}}));
+    nc::json::Value capsValue = nc::json::makeObject({{"class", makeString(workerClass)},
+                                                      {"cores", makeNumber(static_cast<double>(cores))},
+                                                      {"memoryBytes", makeNumber(memory)},
+                                                      {"engineVersion", makeString(NEURACRAFT_WORKER_ENGINE)}});
+    if (nc::currentDevice() == nc::Device::GPU) capsValue.object.push_back({"gpu", makeString(nc::gpuName())});
+    const std::string caps = nc::json::dump(capsValue);
+    std::vector<std::string> recentModels;  // model asset ids of the last jobs (likely still loaded)
     while (!stopping && s.workerId.empty()) {
         try {
             const HttpResponse r = api.post("/v1/worker/register", caps);
@@ -63,8 +80,10 @@ int main() {
     std::cerr << "neuracraft-worker: registered as " << s.workerId << " (" << cores << " cores)\n";
     while (!stopping) {
         try {
+            nc::json::Value loaded = nc::json::makeArray();
+            for (const std::string& m : recentModels) loaded.array.push_back(makeString(m));
             const std::string body = nc::json::dump(nc::json::makeObject(
-                {{"workerId", makeString(s.workerId)}, {"loadedModels", nc::json::makeArray()}, {"waitSeconds", makeNumber(once ? 5 : 20)}}));
+                {{"workerId", makeString(s.workerId)}, {"loadedModels", loaded}, {"waitSeconds", makeNumber(once ? 5 : 20)}}));
             const HttpResponse r = api.post("/v1/worker/claim", body, 40);
             if (r.status != 200) {
                 std::cerr << "neuracraft-worker: claim: " << r.status << " " << r.body << "\n";
@@ -78,6 +97,14 @@ int main() {
                 continue;
             }
             runJob(api, s, *job);
+            if (const nc::json::Value* files = job->find("files"))
+                for (const nc::json::Value& f : files->array)
+                    if (const nc::json::Value* kind = f.find("kind"); kind && kind->string == "model" && f.find("assetId")) {
+                        const std::string id = f.at("assetId").string;
+                        recentModels.erase(std::remove(recentModels.begin(), recentModels.end(), id), recentModels.end());
+                        recentModels.push_back(id);
+                    }
+            while (recentModels.size() > std::max<std::size_t>(1, nc::modelCacheKeep()) * 2) recentModels.erase(recentModels.begin());
             if (once) return 0;
         } catch (const std::exception& e) {
             std::cerr << "neuracraft-worker: " << e.what() << "\n";
