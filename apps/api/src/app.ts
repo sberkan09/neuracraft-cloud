@@ -7,6 +7,7 @@ import type { JobEvents } from "./events.js";
 import { assetRoutes } from "./routes/assets.js";
 import { authRoutes } from "./routes/auth.js";
 import { jobRoutes } from "./routes/jobs.js";
+import { presetRoutes } from "./routes/presets.js";
 import { storageRoutes } from "./routes/storage.js";
 import { workerRoutes } from "./routes/worker.js";
 import type { Storage } from "./storage.js";
@@ -42,6 +43,7 @@ export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Pr
   await authRoutes(app, s);
   await assetRoutes(app, s);
   await jobRoutes(app, s);
+  await presetRoutes(app, s);
   await workerRoutes(app, s);
   await storageRoutes(app, s);
   return app;

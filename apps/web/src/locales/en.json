@@ -84,7 +84,10 @@
     "worker.lease_lost": "The worker lost this job.",
     "model.unsupported": "This model is not supported.",
     "internal": "Something went wrong on our side. You were not charged.",
-    "network": "Cannot reach the server."
+    "network": "Cannot reach the server.",
+    "preset.unknown": "There is no such preset.",
+    "preset.params_invalid": "Invalid preset parameter {{field}}: {{reason}}.",
+    "preset.unavailable": "This preset is not available right now (missing models: {{models}})."
   },
   "nav": {
     "label": "Pages",
@@ -181,7 +184,8 @@
       "image_to_3d": "Image to 3D",
       "rig": "Auto-rig",
       "stereo": "Stereo 3D",
-      "animate": "Animate"
+      "animate": "Animate",
+      "scribble": "Scribble"
     },
     "fields": {
       "amplitude": "Amplitude",
@@ -260,7 +264,10 @@
       "seconds": "Length (s)",
       "speed": "Speed",
       "in_place": "In place",
-      "play": "Play the animation"
+      "play": "Play the animation",
+      "dark_strokes": "Dark strokes",
+      "threshold": "Threshold",
+      "thickness": "Thickness"
     },
     "problem": {
       "required": "Step {{step}}: {{field}} is needed.",
@@ -296,7 +303,8 @@
       "image_to_3d": "A whole 3D model from one picture (TRELLIS.2 on a GPU); a transparent background marks the object",
       "rig": "A skeleton and skin weights for a 3D model, ready to pose and animate (SkinTokens on a GPU)",
       "stereo": "Stereoscopic 3D from pictures or video: left and right eye views for 3D TVs, VR players and red-cyan glasses",
-      "animate": "Moves a rigged figure with motion capture (walk, run, dance...): limbs found on both skeletons, the hips carried along"
+      "animate": "Moves a rigged figure with motion capture (walk, run, dance...): limbs found on both skeletons, the hips carried along",
+      "scribble": "A drawing as the scribble ControlNet's input: its strokes white on black, thickened"
     },
     "choosePictureOrModel": "Choose a picture or a 3D model"
   },

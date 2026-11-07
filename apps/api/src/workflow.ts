@@ -3,6 +3,7 @@
 // every file it names is an asset the user may use. Paths never appear: files are "asset:<id>",
 // saves name an output file.
 import { findOp, fileFieldTypes, type JobLimits } from "@neuracraft/shared";
+import type pg from "pg";
 import type { Db } from "./db.js";
 import { fail } from "./errors.js";
 
@@ -30,7 +31,7 @@ export interface CheckedWorkflow {
   models: string[]; // the model assets among them
 }
 
-export async function checkSubmittedWorkflow(db: Db, userId: string, input: unknown, limits: JobLimits): Promise<CheckedWorkflow> {
+export async function checkSubmittedWorkflow(db: Db | pg.PoolClient, userId: string, input: unknown, limits: JobLimits): Promise<CheckedWorkflow> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) fail(400, "workflow.invalid", { reason: "not an object" });
   const wf = input as Record<string, unknown>;
   const steps = wf.steps;
