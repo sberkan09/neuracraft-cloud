@@ -13,15 +13,16 @@ type Q = Db | pg.PoolClient;
 export interface PartnerSettings {
   endUserDailyJobs: number | null;
   quotaTimezone: string;
+  allowanceRequired: boolean;
 }
 
 export async function partnerSettings(q: Q, userId: string): Promise<PartnerSettings | null> {
-  const r = await q.query<{ end_user_daily_jobs: number | null; quota_timezone: string }>(
-    "SELECT end_user_daily_jobs, quota_timezone FROM partners WHERE user_id = $1",
+  const r = await q.query<{ end_user_daily_jobs: number | null; quota_timezone: string; allowance_required: boolean }>(
+    "SELECT end_user_daily_jobs, quota_timezone, allowance_required FROM partners WHERE user_id = $1",
     [userId],
   );
   const p = r.rows[0];
-  return p ? { endUserDailyJobs: p.end_user_daily_jobs, quotaTimezone: p.quota_timezone } : null;
+  return p ? { endUserDailyJobs: p.end_user_daily_jobs, quotaTimezone: p.quota_timezone, allowanceRequired: p.allowance_required } : null;
 }
 
 // Jobs that count against the day: everything started except jobs the service failed or that were
@@ -38,12 +39,65 @@ export async function endUserDay(q: Q, userId: string, endUser: string, tz: stri
   return { used: Number(r.rows[0]!.used), resetsAt: r.rows[0]!.resets_at };
 }
 
-// Called inside the submission transaction (the per-user lock is held) before anything is reserved.
-export async function checkEndUserQuota(c: pg.PoolClient, userId: string, endUser: string): Promise<void> {
+// Called inside the submission transaction (the per-user lock is held) before anything is reserved:
+// the daily quota, and with allowances on, that the end user's allowance covers the reservation.
+// Returns whether the job draws on the allowance (reserveAllowance after the job row exists).
+export async function checkEndUserQuota(c: pg.PoolClient, userId: string, endUser: string, reserve = 0): Promise<boolean> {
   const p = await partnerSettings(c, userId);
-  if (!p || p.endUserDailyJobs === null) return;
-  const day = await endUserDay(c, userId, endUser, p.quotaTimezone);
-  if (day.used >= p.endUserDailyJobs) fail(429, "quota.end_user_daily", { limit: p.endUserDailyJobs, resetsAt: day.resetsAt.toISOString() });
+  if (!p) return false;
+  if (p.endUserDailyJobs !== null) {
+    const day = await endUserDay(c, userId, endUser, p.quotaTimezone);
+    if (day.used >= p.endUserDailyJobs) fail(429, "quota.end_user_daily", { limit: p.endUserDailyJobs, resetsAt: day.resetsAt.toISOString() });
+  }
+  if (!p.allowanceRequired) return false;
+  const left = await allowanceBalance(c, userId, endUser);
+  if (left < reserve) fail(402, "allowance.insufficient", { needed: reserve, balance: left });
+  return true;
+}
+
+export async function reserveAllowance(c: pg.PoolClient, userId: string, endUser: string, jobId: string, amount: number): Promise<void> {
+  await c.query("INSERT INTO end_user_allowance (user_id, end_user, kind, amount, job_id) VALUES ($1, $2, 'reserve', $3, $4)", [userId, endUser, -amount, jobId]);
+}
+
+// ---- Allowance grants (option A) ----
+
+export async function allowanceBalance(q: Q, userId: string, endUser: string): Promise<number> {
+  const r = await q.query<{ b: string | null }>("SELECT sum(amount) AS b FROM end_user_allowance WHERE user_id = $1 AND end_user = $2", [userId, endUser]);
+  return Number(r.rows[0]?.b ?? 0);
+}
+
+// A grant from the partner's server after it validated a store receipt; idempotent on externalRef
+// (a repeat returns the first grant, created = false).
+export async function grantAllowance(
+  c: pg.PoolClient,
+  userId: string,
+  endUser: string,
+  amount: number,
+  reason: string | null,
+  externalRef: string,
+): Promise<{ id: string; endUser: string; amount: number; reason: string | null; externalRef: string; createdAt: string; created: boolean }> {
+  const ins = await c.query<{ id: string; end_user: string; amount: string; reason: string | null; external_ref: string; created_at: Date }>(
+    `INSERT INTO end_user_allowance (user_id, end_user, kind, amount, reason, external_ref) VALUES ($1, $2, 'grant', $3, $4, $5)
+     ON CONFLICT (user_id, external_ref) WHERE kind = 'grant' DO NOTHING
+     RETURNING id, end_user, amount, reason, external_ref, created_at`,
+    [userId, endUser, amount, reason, externalRef],
+  );
+  const created = ins.rows.length > 0;
+  const row =
+    ins.rows[0] ??
+    (await c.query<{ id: string; end_user: string; amount: string; reason: string | null; external_ref: string; created_at: Date }>(
+      "SELECT id, end_user, amount, reason, external_ref, created_at FROM end_user_allowance WHERE user_id = $1 AND external_ref = $2 AND kind = 'grant'",
+      [userId, externalRef],
+    )).rows[0]!;
+  return { id: String(row.id), endUser: row.end_user, amount: Number(row.amount), reason: row.reason, externalRef: row.external_ref, createdAt: row.created_at.toISOString(), created };
+}
+
+export async function allowanceEntries(q: Q, userId: string, endUser: string, limit = 500) {
+  const r = await q.query<{ kind: string; amount: string; job_id: string | null; reason: string | null; external_ref: string | null; created_at: Date }>(
+    "SELECT kind, amount, job_id, reason, external_ref, created_at FROM end_user_allowance WHERE user_id = $1 AND end_user = $2 ORDER BY id DESC LIMIT $3",
+    [userId, endUser, limit],
+  );
+  return r.rows.map((e) => ({ kind: e.kind, amount: Number(e.amount), jobId: e.job_id, reason: e.reason, externalRef: e.external_ref, at: e.created_at.toISOString() }));
 }
 
 // Everything stored for one end user goes: assets at once (the bytes with the next cleanup), finished
@@ -71,6 +125,7 @@ export async function deleteEndUser(c: pg.PoolClient, userId: string, endUser: s
       WHERE job_id IN (SELECT id FROM jobs WHERE user_id = $1 AND end_user = $2) AND NOT (snapshot ? 'scrubbed')`,
     [userId, endUser],
   );
+  await c.query("DELETE FROM end_user_allowance WHERE user_id = $1 AND end_user = $2", [userId, endUser]);  // the partner keeps its receipts
   const assets = await c.query("DELETE FROM assets WHERE owner_id = $1 AND end_user = $2", [userId, endUser]);
   const jobs = await c.query("DELETE FROM jobs WHERE user_id = $1 AND end_user = $2 AND state IN ('succeeded', 'failed', 'cancelled')", [userId, endUser]);
   return { assets: assets.rowCount ?? 0, jobs: jobs.rowCount ?? 0 };

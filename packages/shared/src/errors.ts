@@ -38,6 +38,7 @@ export const ErrorCodes = [
   "report.invalid",
   "partner.end_user_required",
   "quota.end_user_daily",
+  "allowance.insufficient",
   "worker.unauthorized",
   "worker.lease_lost",
   "model.unsupported",

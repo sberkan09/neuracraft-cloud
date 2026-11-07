@@ -26,4 +26,13 @@ export async function settleJob(q: Q, jobId: string, charged: number): Promise<v
   const reserved = Number(row.reserved ?? 0);
   if (reserved) await entry(q, row.user_id, "release", reserved, jobId);
   if (charged) await entry(q, row.user_id, "settle", -charged, jobId);
+  // A partner end user's allowance (issue #21) follows the same way: its reservation back, the use taken.
+  const a = await q.query<{ user_id: string; end_user: string; reserved: string }>(
+    "SELECT user_id, end_user, -sum(amount) AS reserved FROM end_user_allowance WHERE job_id = $1 AND kind = 'reserve' GROUP BY user_id, end_user",
+    [jobId],
+  );
+  for (const r of a.rows) {
+    await q.query("INSERT INTO end_user_allowance (user_id, end_user, kind, amount, job_id) VALUES ($1, $2, 'release', $3, $4)", [r.user_id, r.end_user, Number(r.reserved), jobId]);
+    if (charged) await q.query("INSERT INTO end_user_allowance (user_id, end_user, kind, amount, job_id) VALUES ($1, $2, 'use', $3, $4)", [r.user_id, r.end_user, -charged, jobId]);
+  }
 }

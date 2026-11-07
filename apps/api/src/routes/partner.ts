@@ -1,6 +1,7 @@
 // Partner apps' end users (issue #21, #19):
 //   GET    /v1/partner/end-users/:id/usage  jobs, cost, today's quota
 //   DELETE /v1/partner/end-users/:id        everything stored for that end user
+//   POST   /v1/partner/end-users/:id/allowance  credits for that end user (partner:manage only)
 // Callers: the partner's server (an app token with partner:manage, any end user), or the app itself
 // acting for that same end user (X-End-User equal to :id), so an app without a backend can offer
 // "delete my data" and "my usage".
@@ -9,7 +10,7 @@ import type { Services } from "../app.js";
 import { END_USER, PARTNER_SCOPE, requireUser, type AuthedUser } from "../auth.js";
 import { tx } from "../db.js";
 import { fail } from "../errors.js";
-import { deleteEndUser, endUserDay, endUserUsage, partnerSettings } from "../partners.js";
+import { allowanceBalance, allowanceEntries, deleteEndUser, endUserDay, endUserUsage, grantAllowance, partnerSettings } from "../partners.js";
 
 export async function partnerRoutes(app: FastifyInstance, s: Services) {
   const allowed = async (req: Parameters<typeof requireUser>[1], id: string): Promise<AuthedUser> => {
@@ -27,9 +28,32 @@ export async function partnerRoutes(app: FastifyInstance, s: Services) {
     return {
       endUser: req.params.id,
       today: p && day ? { used: day.used, limit: p.endUserDailyJobs, resetsAt: day.resetsAt.toISOString() } : null,
+      allowance: { balance: await allowanceBalance(s.db, u.id, req.params.id), entries: await allowanceEntries(s.db, u.id, req.params.id) },
       jobs: await endUserUsage(s.db, u.id, req.params.id, Number(req.query.limit ?? 500) || 500),
     };
   });
+
+  // Called by the partner's server after it validated a store receipt; never by the app (it would
+  // grant itself credits), hence partner:manage. Idempotent on externalRef. credits in credits
+  // (1 credit = 1000 millicredits, the amounts elsewhere).
+  app.post<{ Params: { id: string }; Body: { credits?: unknown; reason?: unknown; externalRef?: unknown } }>(
+    "/v1/partner/end-users/:id/allowance",
+    async (req, reply) => {
+      const u = await requireUser(s.db, req, PARTNER_SCOPE);
+      if (u.tokenKind !== "app") fail(403, "forbidden");
+      if (!END_USER.test(req.params.id)) fail(404, "not_found");
+      const b = req.body ?? {};
+      const credits = Number(b.credits);
+      if (typeof b.credits !== "number" || !Number.isFinite(credits) || credits <= 0 || credits > 1_000_000) fail(400, "request.invalid", { field: "credits" });
+      if (typeof b.externalRef !== "string" || !b.externalRef.trim() || b.externalRef.length > 200) fail(400, "request.invalid", { field: "externalRef" });
+      if (b.reason !== undefined && (typeof b.reason !== "string" || b.reason.length > 200)) fail(400, "request.invalid", { field: "reason" });
+      const grant = await tx(s.db, (c) =>
+        grantAllowance(c, u.id, req.params.id, Math.round(credits * 1000), typeof b.reason === "string" ? b.reason : null, (b.externalRef as string).trim()),
+      );
+      const { created, ...rest } = grant;
+      return reply.status(created ? 201 : 200).send({ grant: rest, balance: await allowanceBalance(s.db, u.id, req.params.id) });
+    },
+  );
 
   app.delete<{ Params: { id: string } }>("/v1/partner/end-users/:id", async (req) => {
     const u = await allowed(req, req.params.id);
