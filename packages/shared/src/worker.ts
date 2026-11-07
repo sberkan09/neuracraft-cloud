@@ -64,10 +64,19 @@ export interface UploadResponse {
   uploads: { name: string; key: string; url: string }[];
 }
 
+// Where a job's time went on the worker (issue #20), in seconds.
+export interface WorkerTimings {
+  fetchSeconds?: number;
+  loadSeconds?: number;
+  runSeconds?: number;
+  uploadSeconds?: number;
+}
+
 export interface CompleteRequest {
   workerId: string;
   outputs: { name: string; key: string; bytes: number; sha256: string; contentType: string }[];
   workerSeconds: number;
+  timings?: WorkerTimings;
 }
 
 export interface FailRequest {
@@ -75,4 +84,5 @@ export interface FailRequest {
   code: string;
   detail?: string;
   workerSeconds: number;
+  timings?: WorkerTimings;
 }

@@ -80,6 +80,7 @@
     "job.not_cancellable": "Bu iş zaten bitti.",
     "job.failed": "İş başarısız oldu.",
     "job.no_3d_worker": "Bu işin gerektirdiği servislere ({{services}}) sahip bir GPU çalışanı şu anda yok. Biraz sonra yeniden dene.",
+    "job.no_gpu_worker": "Şu anda çalışan bir görsel sunucusu yok. Bir dakika sonra tekrar deneyin.",
     "worker.unauthorized": "Worker yetkili değil.",
     "worker.lease_lost": "Worker bu işi kaybetti.",
     "model.unsupported": "Bu model desteklenmiyor.",

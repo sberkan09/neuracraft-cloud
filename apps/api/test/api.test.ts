@@ -323,6 +323,7 @@ describe("jobs", () => {
 
 describe("presets", () => {
   const catalog = async () => {
+    await gpuOnline();
     for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
       await h.s.db.query(
         "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
@@ -551,6 +552,7 @@ describe("prompt step", () => {
   });
 
   it("records how the prompt came about on the job, and refuses filtered texts before anything is reserved", async () => {
+    await gpuOnline();
     for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
       await h.s.db.query(
         "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
@@ -584,8 +586,13 @@ describe("prompt step", () => {
   });
 });
 
+// A GPU worker seen just now (interactive presets are refused without one).
+const gpuOnline = async () => {
+  await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test" } });
+};
 // Preset jobs through a fake GPU worker (moderation, retention).
 const presetCatalog = async () => {
+  await gpuOnline();
   for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
     await h.s.db.query(
       "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
@@ -594,7 +601,7 @@ const presetCatalog = async () => {
 };
 const credits = async (cookie: string) => json(await inject({ method: "GET", url: "/v1/me", headers: { cookie } })).credits as number;
 // A preset job run through a fake GPU worker that uploads these files; returns the finished job.
-const runPreset = async (auth: string | Record<string, string>, files: Record<string, Buffer>, sketch = PNG_1x1) => {
+const runPreset = async (auth: string | Record<string, string>, files: Record<string, Buffer>, sketch = PNG_1x1, timings?: object) => {
   const headers = typeof auth === "string" ? { cookie: auth } : auth;
   await presetCatalog();
   await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");  // only this job to claim
@@ -617,7 +624,7 @@ const runPreset = async (auth: string | Record<string, string>, files: Record<st
     method: "POST",
     url: `/v1/worker/jobs/${jobId}/complete`,
     headers: worker,
-    payload: { workerId, workerSeconds: 3, outputs: up.uploads.map((u: { name: string; key: string }) => ({ name: u.name, key: u.key, bytes: files[u.name]!.length, sha256: "", contentType: types(u.name) })) },
+    payload: { workerId, workerSeconds: 3, timings, outputs: up.uploads.map((u: { name: string; key: string }) => ({ name: u.name, key: u.key, bytes: files[u.name]!.length, sha256: "", contentType: types(u.name) })) },
   });
   assert.equal(done.statusCode, 200, done.body);
   return json(await inject({ method: "GET", url: `/v1/jobs/${jobId}`, headers })).job;
@@ -824,15 +831,20 @@ describe("retention", () => {
     await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");
     h.s.config.interactiveRegions = ["eu"];
     try {
-      const sub = await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } });
-      const jobId = json(sub).job.id;
-      const claimAs = async (region?: string) => {
-        const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test", ...(region ? { region } : {}) } })).workerId;
-        return json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job;
-      };
-      assert.equal(await claimAs(), null);
-      assert.equal(await claimAs("us"), null);
-      assert.equal((await claimAs("eu")).jobId, jobId);
+      const submit = () => inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } });
+      const register = async (region?: string) =>
+        json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test", ...(region ? { region } : {}) } })).workerId as string;
+      const claim = async (workerId: string) => json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job;
+      await h.s.db.query("UPDATE workers SET last_seen_at = now() - interval '1 hour' WHERE capabilities ->> 'region' = 'eu'");
+      // GPU workers elsewhere do not count: the job is refused while no EU worker is about.
+      await register("us");
+      assert.equal(json(await submit()).error.code, "job.no_gpu_worker");
+      const eu = await register("eu");
+      const sub = await submit();
+      assert.equal(sub.statusCode, 201, sub.body);
+      assert.equal(await claim(await register()), null);
+      assert.equal(await claim(await register("us")), null);
+      assert.equal((await claim(eu)).jobId, json(sub).job.id);
     } finally {
       h.s.config.interactiveRegions = [];
     }
@@ -941,5 +953,78 @@ describe("partner apps", () => {
     assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND end_user = 'install-b'", [p.id])).rows[0].n), 0);
     assert.equal(Number((await h.s.db.query("SELECT coalesce(sum(amount), 0) AS n FROM ledger WHERE user_id = $1 AND kind IN ('reserve', 'release')", [p.id])).rows[0].n), 0);
     assert.equal((await inject({ method: "DELETE", url: "/v1/partner/end-users/install-b", headers: as("install-a") })).statusCode, 403);
+  });
+});
+
+describe("interactive jobs", () => {
+  const submitPreset = (cookie: string) =>
+    inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie }, payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } });
+  const register = async (cls: "cpu" | "gpu") =>
+    json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: cls, cores: 2, memoryBytes: 1, engineVersion: "test" } })).workerId as string;
+  const claim = async (workerId: string) => json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job;
+  const noGpu = () => h.s.db.query("UPDATE workers SET last_seen_at = now() - interval '1 hour'");
+
+  it("claims interactive jobs before batch GPU jobs and never gives them to CPU workers", async () => {
+    await presetCatalog();
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");
+    const a = await signUp(h.app);
+    const b = await signUp(h.app);
+    // An older batch GPU job (another user), then an interactive one.
+    const batch = json(await submitPreset(b.cookie)).job.id;
+    await h.s.db.query("UPDATE jobs SET latency = 'batch', created_at = now() - interval '1 minute' WHERE id = $1", [batch]);
+    const interactive = json(await submitPreset(a.cookie)).job.id;
+    assert.equal((await h.s.db.query("SELECT latency, preset_variant FROM jobs WHERE id = $1", [interactive])).rows[0].latency, "interactive");
+    // No GPU about: a CPU worker takes the batch GPU job, never the interactive one.
+    await noGpu();
+    const cpu = await register("cpu");
+    assert.equal((await claim(cpu)).jobId, batch);
+    assert.equal(await claim(cpu), null);
+    // A GPU worker takes it (and would have taken it before the older batch job).
+    await h.s.db.query("UPDATE jobs SET state = 'queued', worker_id = NULL WHERE id = $1", [batch]);
+    const gpu = await register("gpu");
+    assert.equal((await claim(gpu)).jobId, interactive);
+    assert.equal((await claim(gpu)).jobId, batch);
+    const t = (await h.s.db.query("SELECT claimed_at, timings FROM jobs WHERE id = $1", [interactive])).rows[0];
+    assert.ok(t.claimed_at);
+    assert.equal(t.timings.warm, false);
+  });
+
+  it("refuses an interactive job at once when no GPU worker was seen lately; a busy one counts", async () => {
+    await presetCatalog();
+    const a = await signUp(h.app);
+    await noGpu();
+    const started = Date.now();
+    const r = await submitPreset(a.cookie);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(r.statusCode, 503);
+    assert.equal(json(r).error.code, "job.no_gpu_worker");
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1", [a.id])).rows[0].n), 0);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM ledger WHERE user_id = $1 AND kind = 'reserve'", [a.id])).rows[0].n), 0);
+    // A GPU worker busy with a long job heartbeats instead of claiming: it is still about.
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");
+    const gpu = await register("gpu");
+    const b = await signUp(h.app);
+    const long = json(await submitPreset(b.cookie)).job.id;
+    assert.equal((await claim(gpu)).jobId, long);
+    await noGpu();
+    assert.equal((await inject({ method: "POST", url: `/v1/worker/jobs/${long}/heartbeat`, headers: worker, payload: { workerId: gpu } })).statusCode, 200);
+    assert.equal((await submitPreset(a.cookie)).statusCode, 201);
+  });
+
+  it("records where each job's time went and gives operators percentiles per preset and mode", async () => {
+    const { latencyStats } = await import("../src/latency.js");
+    const since = new Date(Date.now() - 1000);
+    const a = await signUp(h.app);
+    for (const run of [1, 2, 3])
+      await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.01) }, PNG_1x1, { fetchSeconds: 0.1, loadSeconds: run === 1 ? 40 : 0, runSeconds: run, uploadSeconds: 0.05, bogus: 9 });
+    const t = (await h.s.db.query("SELECT timings FROM jobs WHERE user_id = $1 ORDER BY created_at LIMIT 1", [a.id])).rows[0].timings;
+    assert.deepEqual([t.fetchSeconds, t.loadSeconds, t.runSeconds, t.uploadSeconds, t.bogus], [0.1, 40, 1, 0.05, undefined]);
+    assert.ok(t.queueSeconds >= 0 && t.totalSeconds >= t.queueSeconds);
+    const rows = (await latencyStats(h.s.db, since)).filter((r) => r.preset === "sketch_to_scene" && r.variant === "map");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.jobs, 3);
+    assert.equal(rows[0]!.run.p50, 2);
+    assert.ok(rows[0]!.run.p95 > 2.8 && rows[0]!.load.p95 > 30);
+    assert.equal(rows[0]!.warm, 0);
   });
 });

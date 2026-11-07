@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { CompleteRequest, FailRequest, HeartbeatRequest, UploadRequest, WorkerCapabilities, WorkerClaimRequest } from "@neuracraft/shared";
 import { outputKind } from "@neuracraft/shared";
 import { moderatorFor, type Services } from "../app.js";
+import type pg from "pg";
 import { tx } from "../db.js";
 import { fail } from "../errors.js";
 import { publish } from "../events.js";
@@ -19,6 +20,22 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_OUTPUT = 2 * 1024 ** 3;
 // Failures that are the workflow's own (charged for the time used); others are the service's (free).
 const userFault = (code: string) => /^(workflow|limit|model)\./.test(code) || code === "cancelled";
+// The job's times (issue #20): the worker's fetch / load / run / upload, the queue wait and the total.
+const TIMING_KEYS = ["fetchSeconds", "loadSeconds", "runSeconds", "uploadSeconds"] as const;
+async function recordTimings(c: pg.PoolClient, jobId: string, given: unknown) {
+  const t: Record<string, number> = {};
+  if (given && typeof given === "object")
+    for (const k of TIMING_KEYS) {
+      const v = (given as Record<string, unknown>)[k];
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e6) t[k] = Math.round(v * 1000) / 1000;
+    }
+  await c.query(
+    `UPDATE jobs SET timings = coalesce(timings, '{}'::jsonb) || $2::jsonb || jsonb_build_object(
+        'queueSeconds', round(extract(epoch FROM claimed_at - created_at)::numeric, 3),
+        'totalSeconds', round(extract(epoch FROM finished_at - created_at)::numeric, 3)) WHERE id = $1`,
+    [jobId, JSON.stringify(t)],
+  );
+}
 
 export async function workerRoutes(app: FastifyInstance, s: Services) {
   const tokens = s.config.workerTokens.map((t) => Buffer.from(t));
@@ -71,6 +88,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     authorize(req);
     const { workerId, progress } = req.body ?? ({} as HeartbeatRequest);
     const j = await lease(req.params.id, workerId);
+    await s.db.query("UPDATE workers SET last_seen_at = now() WHERE id = $1", [workerId]);  // busy, but there
     await s.db.query(
       `UPDATE jobs SET lease_until = now() + make_interval(secs => $3), progress = coalesce($4::jsonb, progress),
               state = 'running', started_at = coalesce(started_at, now())
@@ -133,6 +151,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
           [req.params.id, seconds, JSON.stringify({ code }), JSON.stringify(verdict)],
         );
         await settleJob(c, req.params.id, 0);
+        await recordTimings(c, req.params.id, body.timings);
         await reportHeld(c, req.params.id, j.user_id, heldIds, verdict!);
         await publish(c, req.params.id, { type: "error", error: { code } });
         await publish(c, req.params.id, { type: "state", state: "failed" });
@@ -144,6 +163,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
         [req.params.id, seconds, verdict ? JSON.stringify(verdict) : null],
       );
       await settleJob(c, req.params.id, cost(j.worker_class, seconds));
+      await recordTimings(c, req.params.id, body.timings);
       await publish(c, req.params.id, { type: "state", state: "succeeded" });
     });
     // The scores are in jobs.moderation now; their file goes unless a blob row shares the bytes.
@@ -170,6 +190,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
         ],
       );
       await settleJob(c, req.params.id, userFault(code) ? cost(j.worker_class, seconds) : 0);
+      await recordTimings(c, req.params.id, body.timings);
       if (state === "failed") await publish(c, req.params.id, { type: "error", error: { code, detail: body.detail } });
       await publish(c, req.params.id, { type: "state", state });
     });

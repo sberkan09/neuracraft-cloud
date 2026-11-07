@@ -2,10 +2,12 @@
 #include "Sha256.h"
 
 #include "Image.h"
+#include "ModelCache.h"
 #include "Workflow.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <algorithm>
 #include <cctype>
 #include <condition_variable>
@@ -241,6 +243,18 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
     std::vector<fs::path> transient;  // links of the job's pictures (only models keep theirs)
     const auto started = std::chrono::steady_clock::now();
     auto seconds = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
+    // Where the time went (issue #20): fetching files, loading models, running, uploading.
+    double fetchEnd = 0, runStart = 0, runEnd = 0, loadBefore = nc::modelLoadSeconds(), loadSeconds = 0;
+    auto timings = [&] {
+        const double now = seconds();
+        auto num = [](double v) { return nc::json::makeNumber(std::round(v * 1000) / 1000); };
+        const double run = runEnd > 0 ? runEnd - runStart : (runStart > 0 ? now - runStart : 0);
+        if (runStart > 0) loadSeconds = nc::modelLoadSeconds() - loadBefore;
+        return nc::json::makeObject({{"fetchSeconds", num(fetchEnd > 0 ? fetchEnd : (runStart > 0 ? runStart : now))},
+                                     {"loadSeconds", num(loadSeconds)},
+                                     {"runSeconds", num(std::max(0.0, run - loadSeconds))},
+                                     {"uploadSeconds", num(runEnd > 0 ? now - runEnd : 0)}});
+    };
 
     // Heartbeats keep the lease and carry progress; their answer may ask to cancel.
     std::atomic<bool> cancel{false}, done{false};
@@ -357,7 +371,10 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
                                              {"fraction", nc::json::makeNumber(fraction)}});
             fresh = true;
         };
+        fetchEnd = runStart = seconds();
+        loadBefore = nc::modelLoadSeconds();
         const auto clips = nc::runWorkflow(text, dir.string(), events, nullptr, limits);
+        runEnd = seconds();
 
         // Without a save step, the last clip made is the result.
         std::vector<fs::path> outputs;
@@ -402,19 +419,22 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
                                                          {"contentType", nc::json::makeString(type)}}));
         }
         const double used = seconds();
+        const Value spent = timings();
         finish();
         report(api, "/v1/worker/jobs/" + jobId + "/complete",
-               nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)}, {"outputs", stored}, {"workerSeconds", nc::json::makeNumber(used)}}));
+               nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)}, {"outputs", stored}, {"workerSeconds", nc::json::makeNumber(used)}, {"timings", spent}}));
         std::cerr << "worker: job " << jobId << " done in " << used << " s, " << outputs.size() << " output(s)\n";
     } catch (const std::exception& e) {
         const double used = seconds();
+        const Value spent = timings();
         const std::string code = errorCode(e);
         finish();
         report(api, "/v1/worker/jobs/" + jobId + "/fail",
                nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)},
                                      {"code", nc::json::makeString(code)},
                                      {"detail", nc::json::makeString(std::string(e.what()).substr(0, 2000))},
-                                     {"workerSeconds", nc::json::makeNumber(used)}}));
+                                     {"workerSeconds", nc::json::makeNumber(used)},
+                                     {"timings", spent}}));
         std::cerr << "worker: job " << jobId << " failed (" << code << "): " << e.what() << "\n";
     }
     locks.release();

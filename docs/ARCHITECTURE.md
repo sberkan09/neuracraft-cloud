@@ -52,6 +52,16 @@ changes.
   inpaint, t2v, morph, zoom, outpaint, upscale, interpolate) are GPU jobs; a GPU worker takes them
   first and CPU jobs when there are none, and CPU workers take GPU jobs only while no GPU worker has
   been seen for a minute (slow, but nothing waits forever). GPU time is billed at the GPU rate.
+* **Interactive jobs** (issue #20) — presets used at the table (`latency: "interactive"`, such as
+  `sketch_to_scene`) are claimed before batch jobs of the same priority and never by a CPU worker.
+  When no GPU worker (in `INTERACTIVE_REGIONS`, if set) has been seen for `INTERACTIVE_GRACE_SECONDS`
+  (60), they are refused at submission with `job.no_gpu_worker` instead of waiting. A worker counts
+  as seen while it claims work or heartbeats a running job.
+  - **Timings**: each job records where its time went (`jobs.timings`). The server measures queue wait
+    and the total from submission to finish. The worker reports fetching files, loading models (the
+    engine's `modelLoadSeconds()`), running and uploading, and the claim notes whether the worker
+    already held the job's models (`warm`).
+  - **Operators**: `cli/latency.js` prints p50 / p95 per preset and mode.
 * **3D GPU workers** — a GPU worker with the engine's services beside it
   (`deploy/worker-gpu3d.Dockerfile`, on 127.0.0.1): the 3D service (TRELLIS.2, `NEURACRAFT_3D_URL`)
   and the rigging service (SkinTokens, `NEURACRAFT_RIG_URL`). Once a service has loaded its model the

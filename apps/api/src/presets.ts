@@ -33,6 +33,7 @@ export interface Preset {
   moderate: string; // the clip the output classifier checks (presets.ts routes add the classify step)
   latency: "interactive" | "batch"; // interactive presets may be kept to INTERACTIVE_REGIONS
   retention?: { inputHours: number; outputDays: number }; // retention.ts; absent: kept until deleted
+  variant?(params: Record<string, unknown>): string; // what the latency statistics group by (a mode)
   maxSeconds(params: Record<string, unknown>): number; // the reservation and the time limit
   workflow(params: Record<string, unknown>, inputs: Record<string, string>, models: Models): { steps: Record<string, unknown>[] };
   // A check across parameters, after each one is checked (a message naming the field, or null).
@@ -67,6 +68,7 @@ const sketchToScene: Preset = {
   moderate: "scene",
   latency: "interactive",
   retention: { inputHours: 24, outputDays: 7 },
+  variant: (p) => String(p.mode),
   check: (p) =>
     p.prompt === undefined && p.narrative === undefined
       ? { field: "prompt", reason: "prompt or narrative is required" }
