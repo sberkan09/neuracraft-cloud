@@ -47,9 +47,9 @@ async function jobJson(s: Services, row: JobRow): Promise<Job> {
   };
 }
 
-const THREE_D_GRACE_SECONDS = 600;
-const THREE_D_WORKER =
-  "SELECT 1 FROM workers WHERE class = 'gpu' AND capabilities -> 'features' ? '3d' AND last_seen_at > now() - make_interval(secs => $1) LIMIT 1";
+const SERVICE_GRACE_SECONDS = 600;
+const SERVICE_WORKER =
+  "SELECT 1 FROM workers WHERE class = 'gpu' AND capabilities -> 'features' ?& $1::text[] AND last_seen_at > now() - make_interval(secs => $2) LIMIT 1";
 
 export async function jobRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Body: { workflow?: unknown } }>("/v1/jobs", async (req, reply) => {
@@ -58,17 +58,18 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
     const checked = await checkSubmittedWorkflow(s.db, u.id, req.body?.workflow, plan.limits);
     const workerClass = checked.workerClass;
     const reserve = cost(workerClass, plan.limits.maxSeconds);
-    // 3D models need a GPU worker with the 3D service; without one the job would wait forever.
-    if (workerClass === "gpu3d" && !(await s.db.query(THREE_D_WORKER, [THREE_D_GRACE_SECONDS])).rowCount) fail(503, "job.no_3d_worker");
+    // Steps run by a service (3D models, rigging) need a GPU worker with it; without one the job would wait forever.
+    if (checked.features.length && !(await s.db.query(SERVICE_WORKER, [checked.features, SERVICE_GRACE_SECONDS])).rowCount)
+      fail(503, "job.no_3d_worker", { services: checked.features.join(", ") });
     const row = await tx(s.db, async (c) => {
       await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
       const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);
       if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
       if ((await balance(c, u.id)) < reserve) fail(402, "credits.insufficient", { needed: reserve });
       const r = await c.query<JobRow>(
-        `INSERT INTO jobs (user_id, worker_class, priority, workflow, limits, models, files)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [u.id, workerClass, plan.priority, JSON.stringify(checked.workflow), JSON.stringify(plan.limits), checked.models, checked.files],
+        `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [u.id, workerClass, checked.features, plan.priority, JSON.stringify(checked.workflow), JSON.stringify(plan.limits), checked.models, checked.files],
       );
       await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
       await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });

@@ -66,14 +66,28 @@ int main() {
                                                       {"memoryBytes", makeNumber(memory)},
                                                       {"engineVersion", makeString(NEURACRAFT_WORKER_ENGINE)}});
     if (nc::currentDevice() == nc::Device::GPU) capsValue.object.push_back({"gpu", makeString(nc::gpuName())});
-    // A 3D service next to a GPU worker (NEURACRAFT_3D_URL, services/trellis2 in the engine): it may take
-    // image_to_3d jobs. Waits for the service's model to load before saying so.
-    if (workerClass == "gpu" && !nc::imageTo3DService().empty()) {
-        for (int i = 0; !stopping && !nc::imageTo3DAvailable(); ++i) {
-            if (i % 12 == 0) std::cerr << "neuracraft-worker: waiting for the 3D service at " << nc::imageTo3DService() << "\n";
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+    // Services next to a GPU worker (the engine's services/): the 3D service (NEURACRAFT_3D_URL) lets it
+    // take image_to_3d jobs ("3d"), the rigging service (NEURACRAFT_RIG_URL) rig jobs ("rig"). Waits for
+    // each service's model to load before saying so.
+    if (workerClass == "gpu") {
+        struct Service {
+            const char* feature;
+            const char* what;
+            std::string url;
+            bool (*available)();
+        };
+        const Service services[] = {{"3d", "3D service", nc::imageTo3DService(), nc::imageTo3DAvailable},
+                                    {"rig", "rigging service", nc::rigService(), nc::rigAvailable}};
+        std::vector<nc::json::Value> features;
+        for (const Service& sv : services) {
+            if (sv.url.empty()) continue;
+            for (int i = 0; !stopping && !sv.available(); ++i) {
+                if (i % 12 == 0) std::cerr << "neuracraft-worker: waiting for the " << sv.what << " at " << sv.url << "\n";
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+            }
+            features.push_back(makeString(sv.feature));
         }
-        capsValue.object.push_back({"features", nc::json::makeArray({makeString("3d")})});
+        if (!features.empty()) capsValue.object.push_back({"features", nc::json::makeArray(std::move(features))});
     }
     const std::string caps = nc::json::dump(capsValue);
     std::vector<std::string> recentModels;  // model asset ids of the last jobs (likely still loaded)

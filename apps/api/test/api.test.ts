@@ -231,7 +231,7 @@ describe("jobs", () => {
     assert.equal(await take(cpu), gen2);
   });
 
-  it("sends 3D model jobs only to GPU workers with the 3D service, and refuses them when there is none", async () => {
+  it("sends 3D model and rigging jobs only to GPU workers with those services, and refuses them when there is none", async () => {
     const a = await signUp(h.app);
     const pic = await uploadPicture(h.app, a.cookie);
     await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");
@@ -247,6 +247,7 @@ describe("jobs", () => {
     const none = await submit();
     assert.equal(none.statusCode, 503);
     assert.equal(json(none).error.code, "job.no_3d_worker");
+    assert.equal(json(none).error.params.services, "3d");
 
     const register = async (payload: object) => json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload })).workerId;
     const cpu = await register({ class: "cpu" });
@@ -260,6 +261,20 @@ describe("jobs", () => {
     assert.equal(await take(cpu), null);
     assert.equal(await take(gpu), null, "a GPU worker without the 3D service leaves it");
     assert.equal(await take(gpu3d), job.id);
+    await inject({ method: "POST", url: `/v1/worker/jobs/${job.id}/fail`, headers: worker, payload: { workerId: gpu3d, code: "internal", workerSeconds: 0 } });
+
+    // A job that also rigs the model needs both services.
+    const rigged = { steps: [...model.steps.slice(0, 2), { op: "rig", in: "m", out: "r" }, { op: "save", in: "r", path: "r.glb" }] };
+    const noRig = await inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: rigged } });
+    assert.equal(noRig.statusCode, 503);
+    assert.equal(json(noRig).error.params.services, "3d, rig");
+    const both = await register({ class: "gpu", features: ["3d", "rig"] });
+    const job2 = json(await inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: rigged } })).job;
+    assert.ok(job2);
+    assert.equal(await take(gpu3d), null, "the 3D service alone is not enough");
+    assert.equal(await take(both), job2.id);
+    const stored = await h.s.db.query("SELECT worker_class, features FROM jobs WHERE id = $1", [job2.id]);
+    assert.deepEqual(stored.rows[0], { worker_class: "gpu", features: ["3d", "rig"] });
   });
 
   it("requeues jobs whose worker vanished, and fails them after three attempts", async () => {
