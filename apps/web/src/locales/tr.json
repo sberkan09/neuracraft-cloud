@@ -97,7 +97,8 @@
     "content.unchecked": "Sonuç içerik filtresinden geçirilemediği için gösterilmiyor. Ücret alınmadı.",
     "report.invalid": "Bu bildirim gönderilemiyor ({{field}}: {{reason}}).",
     "partner.end_user_required": "Bu uygulama isteğin hangi kullanıcısı için olduğunu belirtmeli (X-End-User).",
-    "quota.end_user_daily": "Bugünkü görsel hakkınızı kullandınız ({{limit}}). Yenisi {{resetsAt}} itibarıyla."
+    "quota.end_user_daily": "Bugünkü görsel hakkınızı kullandınız ({{limit}}). Yenisi {{resetsAt}} itibarıyla.",
+    "allowance.insufficient": "Yeterli görsel krediniz kalmadı. Uygulamadan satın alabilirsiniz."
   },
   "nav": {
     "label": "Sayfalar",

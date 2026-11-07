@@ -171,7 +171,18 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
     `DELETE /v1/partner/end-users/:id` (everything stored for them; idempotent). The app itself may
     call them for its own end user, and the partner's server with a `partner:manage` token (an app
     token for servers only, which needs no `X-End-User`) for any end user.
-  - **Allowance grants** paid through in-app purchases (option A) come next.
+  - **Allowance grants** (option A): with `cli/partner.js --allowance on`, an end user's jobs draw on
+    an allowance. After validating a store receipt, the partner's server grants credits with
+    `POST /v1/partner/end-users/:id/allowance {credits, reason?, externalRef}`. The call needs
+    `partner:manage`, so an app token gets `auth.scope_missing`, and it is idempotent on
+    `externalRef`.
+    - **Ledger**: entries go to `end_user_allowance` (grant, reserve, release, use; millicredits),
+      tagged with the end user and the store reference.
+    - **Jobs**: a job reserves its maximum from the allowance and keeps only what it used. Held
+      results and the service's failures cost nothing. With too little allowance, the job is refused
+      before anything is reserved (`allowance.insufficient`, 402).
+    - **Billing**: the partner still pays NeuraCraft for every job from its own account ledger.
+    - **Visibility**: the usage endpoint shows the balance and the entries.
 * **User models**: the uploader declares the license and confirms they may use it; private to them;
   removed on a valid takedown notice.
 

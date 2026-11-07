@@ -97,7 +97,8 @@
     "content.unchecked": "The result could not be checked by the content filter, so it is not shown. Nothing was charged.",
     "report.invalid": "This report cannot be sent ({{field}}: {{reason}}).",
     "partner.end_user_required": "This app must say which of its users the request is for (X-End-User).",
-    "quota.end_user_daily": "You have used today's images ({{limit}}). More from {{resetsAt}}."
+    "quota.end_user_daily": "You have used today's images ({{limit}}). More from {{resetsAt}}.",
+    "allowance.insufficient": "Not enough image credits left. Buy more in the app."
   },
   "nav": {
     "label": "Pages",

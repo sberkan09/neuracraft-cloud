@@ -8,7 +8,7 @@ import { publish } from "../events.js";
 import { balance, entry, settleJob } from "../ledger.js";
 import { cost, planFor } from "../plans.js";
 import { checkSubmittedWorkflow, type CheckedWorkflow } from "../workflow.js";
-import { checkEndUserQuota } from "../partners.js";
+import { checkEndUserQuota, reserveAllowance } from "../partners.js";
 import type { JobLimits } from "@neuracraft/shared";
 import type pg from "pg";
 
@@ -83,7 +83,7 @@ export async function queueJob(
   await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
   const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);
   if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
-  if (u.endUser) await checkEndUserQuota(c, u.id, u.endUser);  // before anything is reserved
+  const fromAllowance = u.endUser ? await checkEndUserQuota(c, u.id, u.endUser, reserve) : false;  // before anything is reserved
   if ((await balance(c, u.id)) < reserve) fail(402, "credits.insufficient", { needed: reserve });
   const r = await c.query<JobRow>(
     `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version, prompt_info, regions, end_user, latency, preset_variant)
@@ -92,6 +92,7 @@ export async function queueJob(
      opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null, opts.regions ?? [], u.endUser, opts.latency ?? "batch", opts.preset?.variant ?? null],
   );
   await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
+  if (fromAllowance) await reserveAllowance(c, u.id, u.endUser!, r.rows[0]!.id, reserve);
   await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });
   return r.rows[0]!;
 }

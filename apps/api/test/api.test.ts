@@ -1032,3 +1032,55 @@ describe("interactive jobs", () => {
     assert.equal(rows[0]!.warm, 0);
   });
 });
+
+describe("partner allowances", () => {
+  it("grants allowance from the partner's server only, idempotent on externalRef; jobs draw on it", async () => {
+    const { createToken } = await import("../src/auth.js");
+    await presetCatalog();
+    const p = await signUp(h.app);
+    const app = await createToken(h.s.db, p.id, "app", "GM Cebi", ["jobs:submit", "jobs:read", "assets:read"], null);
+    const server = { authorization: `Bearer ${(await createToken(h.s.db, p.id, "app", "GM Cebi server", ["partner:manage"], null)).secret}` };
+    const as = (e: string) => ({ authorization: `Bearer ${app.secret}`, "x-end-user": e });
+    await h.s.db.query("INSERT INTO partners (user_id, allowance_required) VALUES ($1, true)", [p.id]);
+    const grant = (headers: Record<string, string>, body: object) => inject({ method: "POST", url: "/v1/partner/end-users/install-a/allowance", headers, payload: body });
+
+    // The app cannot grant itself credits.
+    const self = await grant(as("install-a"), { credits: 10, externalRef: "GPA.1" });
+    assert.equal(self.statusCode, 403);
+    assert.equal(json(self).error.code, "auth.scope_missing");
+    assert.equal((await grant(server, { credits: -1, externalRef: "x" })).statusCode, 400);
+    assert.equal((await grant(server, { credits: 5 })).statusCode, 400);
+
+    // No allowance yet: refused before anything is reserved.
+    const submit = () => inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: as("install-a"), payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } });
+    const broke = await submit();
+    assert.equal(broke.statusCode, 402);
+    assert.equal(json(broke).error.code, "allowance.insufficient");
+    assert.deepEqual(json(broke).error.params, { needed: 5000, balance: 0 });
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM ledger WHERE user_id = $1 AND kind = 'reserve'", [p.id])).rows[0].n), 0);
+
+    const first = await grant(server, { credits: 8, reason: "pack of 8", externalRef: "GPA.3392-1" });
+    assert.equal(first.statusCode, 201);
+    assert.equal(json(first).balance, 8000);
+    const again = await grant(server, { credits: 8, reason: "pack of 8", externalRef: "GPA.3392-1" });
+    assert.equal(again.statusCode, 200);
+    assert.equal(json(again).grant.id, json(first).grant.id);
+    assert.equal(json(again).balance, 8000);
+
+    // A job: the reservation comes out of the allowance, then only what it used.
+    const job = await runPreset(as("install-a"), { "scene.png": PNG_1x1, "moderation.json": scores(0.01) });
+    assert.equal(job.state, "succeeded");
+    const usage = json(await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: server }));
+    const charged = usage.jobs[0].charged;
+    assert.equal(usage.allowance.balance, 8000 - charged);
+    assert.deepEqual(usage.allowance.entries.map((e: { kind: string }) => e.kind), ["use", "release", "reserve", "grant"]);
+    assert.equal(usage.allowance.entries[3].externalRef, "GPA.3392-1");
+    // Another end user has none of it.
+    assert.equal(json(await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: as("install-b"), payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } })).error.code, "allowance.insufficient");
+    // A held result costs the end user nothing.
+    const before = usage.allowance.balance;
+    h.s.moderator = { judge: async () => ({ checked: true, flagged: true, scores: { nsfw: 0.9 } }) };
+    await runPreset(as("install-a"), { "scene.png": PNG_1x1 }).finally(() => (h.s.moderator = undefined));
+    assert.equal(json(await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: server })).allowance.balance, before);
+  });
+});
