@@ -35,6 +35,8 @@ export const ErrorCodes = [
   "content.flagged",
   "content.unchecked",
   "report.invalid",
+  "partner.end_user_required",
+  "quota.end_user_daily",
   "worker.unauthorized",
   "worker.lease_lost",
   "model.unsupported",

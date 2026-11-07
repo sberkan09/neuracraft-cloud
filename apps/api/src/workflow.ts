@@ -34,7 +34,13 @@ export interface CheckedWorkflow {
   models: string[]; // the model assets among them
 }
 
-export async function checkSubmittedWorkflow(db: Db | pg.PoolClient, userId: string, input: unknown, limits: JobLimits): Promise<CheckedWorkflow> {
+export async function checkSubmittedWorkflow(
+  db: Db | pg.PoolClient,
+  userId: string,
+  input: unknown,
+  limits: JobLimits,
+  endUser: string | null = null, // a partner's end user may use only their own files (and the catalog)
+): Promise<CheckedWorkflow> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) fail(400, "workflow.invalid", { reason: "not an object" });
   const wf = input as Record<string, unknown>;
   const steps = wf.steps;
@@ -79,8 +85,8 @@ export async function checkSubmittedWorkflow(db: Db | pg.PoolClient, userId: str
   const ids = [...refs.keys()];
   if (ids.length) {
     const r = await db.query<{ id: string; kind: string }>(
-      "SELECT id, kind FROM assets WHERE id = ANY($1::uuid[]) AND status = 'ready' AND (owner_id = $2 OR (owner_id IS NULL AND kind = 'model'))",
-      [ids, userId],
+      "SELECT id, kind FROM assets WHERE id = ANY($1::uuid[]) AND status = 'ready' AND ((owner_id = $2 AND end_user IS NOT DISTINCT FROM $3) OR (owner_id IS NULL AND kind = 'model'))",
+      [ids, userId, endUser],
     );
     const found = new Map(r.rows.map((x) => [x.id, x.kind]));
     for (const [id, use] of refs) {

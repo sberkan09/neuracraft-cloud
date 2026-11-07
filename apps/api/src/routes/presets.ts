@@ -82,12 +82,12 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
       for (const f of stored) {
         await c.query("INSERT INTO blobs (sha256, bytes) VALUES ($1, $2) ON CONFLICT DO NOTHING", [f.sha256, f.bytes]);
         const a = await c.query<{ id: string }>(
-          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes, status, expires_at) VALUES ($1, 'input', $2, $3, $4, $5, 'ready', $6) RETURNING id",
-          [u.id, `${f.name}.png`, f.contentType, f.sha256, f.bytes, inputExpiry(preset.id)],
+          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes, status, expires_at, end_user) VALUES ($1, 'input', $2, $3, $4, $5, 'ready', $6, $7) RETURNING id",
+          [u.id, `${f.name}.png`, f.contentType, f.sha256, f.bytes, inputExpiry(preset.id), u.endUser],
         );
         refs[f.name] = a.rows[0]!.id;
       }
-      const checked = await checkSubmittedWorkflow(c, u.id, moderatedWorkflow(preset, params, refs, models), limits);
+      const checked = await checkSubmittedWorkflow(c, u.id, moderatedWorkflow(preset, params, refs, models), limits, u.endUser);
       const regions = preset.latency === "interactive" ? s.config.interactiveRegions : [];
       return queueJob(s, c, u, checked, { limits, preset: { id: preset.id, version: preset.version }, promptInfo, regions });
     });

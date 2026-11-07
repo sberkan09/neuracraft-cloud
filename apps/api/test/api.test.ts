@@ -594,13 +594,14 @@ const presetCatalog = async () => {
 };
 const credits = async (cookie: string) => json(await inject({ method: "GET", url: "/v1/me", headers: { cookie } })).credits as number;
 // A preset job run through a fake GPU worker that uploads these files; returns the finished job.
-const runPreset = async (cookie: string, files: Record<string, Buffer>, sketch = PNG_1x1) => {
+const runPreset = async (auth: string | Record<string, string>, files: Record<string, Buffer>, sketch = PNG_1x1) => {
+  const headers = typeof auth === "string" ? { cookie: auth } : auth;
   await presetCatalog();
   await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");  // only this job to claim
   const sub = await inject({
     method: "POST",
     url: "/v1/presets/sketch_to_scene/jobs",
-    headers: { cookie },
+    headers,
     payload: { params: { mode: "map", narrative: "Nehrin üzerinde ahşap bir köprü" }, inputs: { sketch: { inline: sketch.toString("base64"), contentType: "image/png" } } },
   });
   assert.equal(sub.statusCode, 201, sub.body);
@@ -619,7 +620,7 @@ const runPreset = async (cookie: string, files: Record<string, Buffer>, sketch =
     payload: { workerId, workerSeconds: 3, outputs: up.uploads.map((u: { name: string; key: string }) => ({ name: u.name, key: u.key, bytes: files[u.name]!.length, sha256: "", contentType: types(u.name) })) },
   });
   assert.equal(done.statusCode, 200, done.body);
-  return json(await inject({ method: "GET", url: `/v1/jobs/${jobId}`, headers: { cookie } })).job;
+  return json(await inject({ method: "GET", url: `/v1/jobs/${jobId}`, headers })).job;
 };
 const scores = (nsfw: number) => Buffer.from(JSON.stringify({ model: "nsfw.onnx", labels: ["normal", "nsfw"], scores: { normal: 1 - nsfw, nsfw }, frames: [[1 - nsfw, nsfw]] }));
 const outputAsset = async (jobId: string) => (await h.s.db.query("SELECT a.id, a.status FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 AND o.name = 'scene.png'", [jobId])).rows[0];
@@ -842,5 +843,103 @@ describe("retention", () => {
     assert.equal(logUrl("/v1/storage/eyJrIjoiYmxvYnMvYWJjIn0.c2ln"), "/v1/storage/<signed>");
     assert.equal(logUrl("/v1/jobs/1?limit=5"), "/v1/jobs/1");
     assert.equal(logUrl("/v1/presets/sketch_to_scene/jobs"), "/v1/presets/sketch_to_scene/jobs");
+  });
+});
+
+describe("partner apps", () => {
+  // A partner account with an app token for its app and a partner:manage token for its server.
+  const partner = async () => {
+    const { createToken } = await import("../src/auth.js");
+    const p = await signUp(h.app);
+    const app = await createToken(h.s.db, p.id, "app", "GM Cebi", ["jobs:submit", "jobs:read", "assets:read", "assets:write"], null);
+    const server = await createToken(h.s.db, p.id, "app", "GM Cebi server", ["partner:manage"], null);
+    const as = (endUser?: string) => ({ authorization: `Bearer ${app.secret}`, ...(endUser ? { "x-end-user": endUser } : {}) });
+    return { p, as, server: { authorization: `Bearer ${server.secret}` } };
+  };
+  const sketch = { inline: PNG_1x1.toString("base64"), contentType: "image/png" };
+  const submit = (headers: Record<string, string>, inputs: object = { sketch }) =>
+    inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers, payload: { params: { mode: "map", prompt: "a wooden bridge" }, inputs } });
+
+  it("keeps two end users of one partner apart, and needs X-End-User on app tokens", async () => {
+    await presetCatalog();
+    const { p, as } = await partner();
+    const none = await submit(as());
+    assert.equal(none.statusCode, 400);
+    assert.equal(json(none).error.code, "partner.end_user_required");
+    assert.equal((await submit(as("bad id with spaces"))).statusCode, 400);
+    assert.equal((await inject({ method: "GET", url: "/v1/jobs", headers: as() })).statusCode, 400);
+
+    const a = await submit(as("install-a"));
+    assert.equal(a.statusCode, 201, a.body);
+    const jobA = json(a).job.id;
+    await h.s.db.query("UPDATE jobs SET state = 'succeeded' WHERE id = $1", [jobA]);
+    const sketchA = (await h.s.db.query("SELECT files FROM jobs WHERE id = $1", [jobA])).rows[0].files[0];
+    assert.equal((await h.s.db.query("SELECT end_user FROM jobs WHERE id = $1", [jobA])).rows[0].end_user, "install-a");
+    assert.equal((await h.s.db.query("SELECT end_user FROM assets WHERE id = $1", [sketchA])).rows[0].end_user, "install-a");
+
+    assert.deepEqual(json(await inject({ method: "GET", url: "/v1/jobs", headers: as("install-a") })).jobs.map((j: { id: string }) => j.id), [jobA]);
+    assert.deepEqual(json(await inject({ method: "GET", url: "/v1/jobs", headers: as("install-b") })).jobs, []);
+    assert.equal((await inject({ method: "GET", url: `/v1/jobs/${jobA}`, headers: as("install-b") })).statusCode, 404);
+    assert.equal((await inject({ method: "GET", url: `/v1/assets/${sketchA}/content`, headers: as("install-b") })).statusCode, 404);
+    assert.equal((await inject({ method: "GET", url: `/v1/assets/${sketchA}/content`, headers: as("install-a") })).statusCode, 302);
+    assert.deepEqual(json(await inject({ method: "GET", url: "/v1/assets", headers: as("install-b") })).assets, []);
+    // b cannot use a's sketch; the partner's own session sees neither end user's files.
+    const stolen = await submit(as("install-b"), { sketch: `asset:${sketchA}` });
+    assert.equal(json(stolen).error.code, "workflow.asset_missing");
+    assert.deepEqual(json(await inject({ method: "GET", url: "/v1/jobs", headers: { cookie: p.cookie } })).jobs, []);
+  });
+
+  it("refuses an end user's job past the daily quota before reserving anything", async () => {
+    await presetCatalog();
+    const { p, as } = await partner();
+    await h.s.db.query("INSERT INTO partners (user_id, end_user_daily_jobs) VALUES ($1, 2)", [p.id]);
+    const done = async (r: { body: string }) => h.s.db.query("UPDATE jobs SET state = 'succeeded' WHERE id = $1", [JSON.parse(r.body).job.id]);
+    await done(await submit(as("install-a")));
+    const second = await submit(as("install-a"));
+    assert.equal(second.statusCode, 201);
+    const reserves = async () => Number((await h.s.db.query("SELECT count(*) AS n FROM ledger WHERE user_id = $1 AND kind = 'reserve'", [p.id])).rows[0].n);
+    const before = await reserves();
+    const third = await submit(as("install-a"));
+    assert.equal(third.statusCode, 429);
+    assert.equal(json(third).error.code, "quota.end_user_daily");
+    assert.equal(json(third).error.params.limit, 2);
+    assert.ok(new Date(json(third).error.params.resetsAt) > new Date());
+    assert.equal(await reserves(), before);
+    // Another end user has their own day; a job cancelled while queued gives the slot back.
+    const b = await submit(as("install-b"));
+    assert.equal(b.statusCode, 201);
+    await done(b);
+    assert.equal((await inject({ method: "POST", url: `/v1/jobs/${json(second).job.id}/cancel`, headers: as("install-a") })).json().state, "cancelled");
+    assert.equal((await submit(as("install-a"))).statusCode, 201);
+    const usage = json(await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: as("install-a") }));
+    assert.deepEqual([usage.today.used, usage.today.limit], [2, 2]);
+  });
+
+  it("deletes everything of one end user (idempotent) and exports their usage", async () => {
+    const { p, as, server } = await partner();
+    const job = await runPreset(as("install-a"), { "scene.png": Buffer.concat([PNG_1x1, randomBytes(8)]), "moderation.json": scores(0.01) });
+    assert.equal(job.state, "succeeded");
+    await submit(as("install-b"));
+    const usage = await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: as("install-a") });
+    assert.equal(usage.statusCode, 200);
+    const row = json(usage).jobs[0];
+    assert.deepEqual([row.jobId, row.preset, row.state], [job.id, "sketch_to_scene", "succeeded"]);
+    assert.ok(row.charged > 0);
+    assert.equal((await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: as("install-b") })).statusCode, 403);
+    assert.equal((await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: server })).statusCode, 200);
+    assert.equal((await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: { cookie: p.cookie } })).statusCode, 403);
+
+    const del = await inject({ method: "DELETE", url: "/v1/partner/end-users/install-a", headers: as("install-a") });
+    assert.equal(del.statusCode, 200);
+    assert.deepEqual(json(del).deleted, { assets: 2, jobs: 1 });  // the sketch, the scene; the job
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM assets WHERE owner_id = $1 AND end_user = 'install-a'", [p.id])).rows[0].n), 0);
+    assert.equal((await inject({ method: "GET", url: `/v1/jobs/${job.id}`, headers: as("install-a") })).statusCode, 404);
+    assert.deepEqual(json(await inject({ method: "DELETE", url: "/v1/partner/end-users/install-a", headers: as("install-a") })).deleted, { assets: 0, jobs: 0 });
+    // The partner's server deletes b, whose job is still queued: cancelled, nothing charged, nothing left.
+    const b = await inject({ method: "DELETE", url: "/v1/partner/end-users/install-b", headers: server });
+    assert.equal(json(b).deleted.assets, 1);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND end_user = 'install-b'", [p.id])).rows[0].n), 0);
+    assert.equal(Number((await h.s.db.query("SELECT coalesce(sum(amount), 0) AS n FROM ledger WHERE user_id = $1 AND kind IN ('reserve', 'release')", [p.id])).rows[0].n), 0);
+    assert.equal((await inject({ method: "DELETE", url: "/v1/partner/end-users/install-b", headers: as("install-a") })).statusCode, 403);
   });
 });

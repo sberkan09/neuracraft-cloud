@@ -68,9 +68,9 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
         if (!b.license) fail(400, "request.invalid", { field: "license" });
       }
       const r = await s.db.query<AssetRow>(
-        `INSERT INTO assets (owner_id, kind, model_kind, name, content_type, bytes, license, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'uploading') RETURNING *`,
-        [u.id, kind, kind === "model" ? (/\.bvh$/i.test(name) ? "mocap" : (b.modelKind ?? null)) : null, name, String(b.contentType ?? "application/octet-stream").slice(0, 100), bytes, b.license ?? null],
+        `INSERT INTO assets (owner_id, kind, model_kind, name, content_type, bytes, license, status, end_user)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'uploading', $8) RETURNING *`,
+        [u.id, kind, kind === "model" ? (/\.bvh$/i.test(name) ? "mocap" : (b.modelKind ?? null)) : null, name, String(b.contentType ?? "application/octet-stream").slice(0, 100), bytes, b.license ?? null, u.endUser],
       );
       const asset = r.rows[0]!;
       return reply.status(201).send({ asset: assetJson(asset), uploadUrl: s.storage.uploadUrl(`uploads/${asset.id}`, bytes, 3600) });
@@ -81,7 +81,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string } }>("/v1/assets/:id/complete", async (req) => {
     const u = await requireUser(s.db, req, "assets:write");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
-    const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND status = 'uploading'", [req.params.id, u.id]);
+    const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND end_user IS NOT DISTINCT FROM $3 AND status = 'uploading'", [req.params.id, u.id, u.endUser]);
     const a = r.rows[0] ?? fail(404, "not_found");
     const key = `uploads/${a.id}`;
     const head = await magic(s, key).catch(() => fail(400, "request.invalid", { reason: "nothing uploaded" }));
@@ -111,8 +111,8 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: { kind?: string } }>("/v1/assets", async (req) => {
     const u = await requireUser(s.db, req, "assets:read");
     const r = await s.db.query<AssetRow>(
-      "SELECT * FROM assets WHERE owner_id = $1 AND status IN ('ready', 'held') AND ($2::text IS NULL OR kind = $2) ORDER BY created_at DESC LIMIT 200",
-      [u.id, req.query.kind ?? null],
+      "SELECT * FROM assets WHERE owner_id = $1 AND end_user IS NOT DISTINCT FROM $3 AND status IN ('ready', 'held') AND ($2::text IS NULL OR kind = $2) ORDER BY created_at DESC LIMIT 200",
+      [u.id, req.query.kind ?? null, u.endUser],
     );
     return { assets: r.rows.map(assetJson) };
   });
@@ -127,7 +127,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Params: { id: string } }>("/v1/assets/:id/content", async (req, reply) => {
     const u = await requireUser(s.db, req, "assets:read");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
-    const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND status = 'ready' AND kind <> 'model'", [req.params.id, u.id]);
+    const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND end_user IS NOT DISTINCT FROM $3 AND status = 'ready' AND kind <> 'model'", [req.params.id, u.id, u.endUser]);
     const a = r.rows[0] ?? fail(404, "not_found");
     return reply.redirect(s.storage.downloadUrl(blobKey(a.sha256!), 600, a.name), 302);
   });
@@ -135,7 +135,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   app.delete<{ Params: { id: string } }>("/v1/assets/:id", async (req) => {
     const u = await requireUser(s.db, req, "assets:write");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
-    const r = await s.db.query("UPDATE assets SET status = 'removed' WHERE id = $1 AND owner_id = $2 AND status <> 'removed'", [req.params.id, u.id]);
+    const r = await s.db.query("UPDATE assets SET status = 'removed' WHERE id = $1 AND owner_id = $2 AND end_user IS NOT DISTINCT FROM $3 AND status <> 'removed'", [req.params.id, u.id, u.endUser]);
     if (!r.rowCount) fail(404, "not_found");
     return { ok: true };
   });

@@ -16,8 +16,8 @@ export async function reportRoutes(app: FastifyInstance, s: Services) {
     const u = await requireUser(s.db, req, "assets:read");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
     const a = await s.db.query<{ id: string; owner_id: string }>(
-      "SELECT id, owner_id FROM assets WHERE id = $1 AND owner_id = $2 AND kind = 'output' AND status IN ('ready', 'held')",
-      [req.params.id, u.id],
+      "SELECT id, owner_id FROM assets WHERE id = $1 AND owner_id = $2 AND end_user IS NOT DISTINCT FROM $3 AND kind = 'output' AND status IN ('ready', 'held')",
+      [req.params.id, u.id, u.endUser],
     );
     const asset = a.rows[0] ?? fail(404, "not_found");
     const body = req.body ?? {};

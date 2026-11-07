@@ -8,6 +8,7 @@ import { publish } from "../events.js";
 import { balance, entry, settleJob } from "../ledger.js";
 import { cost, planFor } from "../plans.js";
 import { checkSubmittedWorkflow, type CheckedWorkflow } from "../workflow.js";
+import { checkEndUserQuota } from "../partners.js";
 import type { JobLimits } from "@neuracraft/shared";
 import type pg from "pg";
 
@@ -59,7 +60,7 @@ const SERVICE_WORKER =
 export async function queueJob(
   s: Services,
   c: pg.PoolClient,
-  u: { id: string; plan: string },
+  u: { id: string; plan: string; endUser: string | null },
   checked: CheckedWorkflow,
   opts: { limits: JobLimits; preset?: { id: string; version: number }; promptInfo?: Record<string, unknown> | null; regions?: string[] },
 ): Promise<JobRow> {
@@ -70,12 +71,13 @@ export async function queueJob(
   await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
   const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);
   if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
+  if (u.endUser) await checkEndUserQuota(c, u.id, u.endUser);  // before anything is reserved
   if ((await balance(c, u.id)) < reserve) fail(402, "credits.insufficient", { needed: reserve });
   const r = await c.query<JobRow>(
-    `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version, prompt_info, regions)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+    `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version, prompt_info, regions, end_user)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
     [u.id, checked.workerClass, checked.features, plan.priority, JSON.stringify(checked.workflow), JSON.stringify(opts.limits), checked.models, checked.files,
-     opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null, opts.regions ?? []],
+     opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null, opts.regions ?? [], u.endUser],
   );
   await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
   await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });
@@ -86,7 +88,7 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Body: { workflow?: unknown } }>("/v1/jobs", async (req, reply) => {
     const u = await requireUser(s.db, req, "jobs:submit");
     const plan = planFor(u.plan);
-    const checked = await checkSubmittedWorkflow(s.db, u.id, req.body?.workflow, plan.limits);
+    const checked = await checkSubmittedWorkflow(s.db, u.id, req.body?.workflow, plan.limits, u.endUser);
     const row = await tx(s.db, (c) => queueJob(s, c, u, checked, { limits: plan.limits }));
     return reply.status(201).send({ job: await jobJson(s, row) });
   });
@@ -94,25 +96,25 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: { limit?: string } }>("/v1/jobs", async (req) => {
     const u = await requireUser(s.db, req, "jobs:read");
     const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 30) || 30));
-    const r = await s.db.query<JobRow>("SELECT * FROM jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2", [u.id, limit]);
+    const r = await s.db.query<JobRow>("SELECT * FROM jobs WHERE user_id = $1 AND end_user IS NOT DISTINCT FROM $3 ORDER BY created_at DESC LIMIT $2", [u.id, limit, u.endUser]);
     return { jobs: await Promise.all(r.rows.map((x) => jobJson(s, x))) };
   });
 
-  const own = async (userId: string, id: string) => {
+  const own = async (u: { id: string; endUser: string | null }, id: string) => {
     if (!UUID.test(id)) fail(404, "not_found");
-    const r = await s.db.query<JobRow>("SELECT * FROM jobs WHERE id = $1 AND user_id = $2", [id, userId]);
+    const r = await s.db.query<JobRow>("SELECT * FROM jobs WHERE id = $1 AND user_id = $2 AND end_user IS NOT DISTINCT FROM $3", [id, u.id, u.endUser]);
     return r.rows[0] ?? fail(404, "not_found");
   };
 
   app.get<{ Params: { id: string } }>("/v1/jobs/:id", async (req) => {
     const u = await requireUser(s.db, req, "jobs:read");
-    return { job: await jobJson(s, await own(u.id, req.params.id)) };
+    return { job: await jobJson(s, await own(u, req.params.id)) };
   });
 
   // Queued: cancelled at once. Running: the worker is told on its next heartbeat and stops.
   app.post<{ Params: { id: string } }>("/v1/jobs/:id/cancel", async (req) => {
     const u = await requireUser(s.db, req, "jobs:submit");
-    await own(u.id, req.params.id);
+    await own(u, req.params.id);
     const state = await tx(s.db, async (c) => {
       const r = await c.query<{ state: string }>("SELECT state FROM jobs WHERE id = $1 FOR UPDATE", [req.params.id]);
       const st = r.rows[0]!.state;
@@ -134,7 +136,7 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
   // Live progress as server-sent events: the current job first, then each change until it finishes.
   app.get<{ Params: { id: string } }>("/v1/jobs/:id/events", async (req, reply) => {
     const u = await requireUser(s.db, req, "jobs:read");
-    const row = await own(u.id, req.params.id);
+    const row = await own(u, req.params.id);
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" });

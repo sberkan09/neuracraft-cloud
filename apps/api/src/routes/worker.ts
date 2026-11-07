@@ -29,8 +29,8 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
   };
   const lease = async (jobId: string, workerId: string) => {
     if (!UUID.test(jobId) || !UUID.test(workerId)) fail(404, "not_found");
-    const r = await s.db.query<{ user_id: string; worker_class: string; cancel: boolean; started_at: Date | null; preset: string | null }>(
-      "SELECT user_id, worker_class, cancel, started_at, preset FROM jobs WHERE id = $1 AND worker_id = $2 AND state IN ('leased', 'running')",
+    const r = await s.db.query<{ user_id: string; worker_class: string; cancel: boolean; started_at: Date | null; preset: string | null; end_user: string | null }>(
+      "SELECT user_id, worker_class, cancel, started_at, preset, end_user FROM jobs WHERE id = $1 AND worker_id = $2 AND state IN ('leased', 'running')",
       [jobId, workerId],
     );
     return r.rows[0] ?? fail(409, "worker.lease_lost");
@@ -118,8 +118,8 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
       for (const o of outputs) {
         await c.query("INSERT INTO blobs (sha256, bytes) VALUES ($1, $2) ON CONFLICT DO NOTHING", [o.sha256, o.bytes]);
         const a = await c.query<{ id: string }>(
-          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes, status, expires_at) VALUES ($1, 'output', $2, $3, $4, $5, $6, $7) RETURNING id",
-          [j.user_id, o.name, String(o.contentType ?? "application/octet-stream").slice(0, 100), o.sha256, o.bytes, held ? "held" : "ready", outputExpiry(j.preset)],
+          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes, status, expires_at, end_user) VALUES ($1, 'output', $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+          [j.user_id, o.name, String(o.contentType ?? "application/octet-stream").slice(0, 100), o.sha256, o.bytes, held ? "held" : "ready", outputExpiry(j.preset), j.end_user],
         );
         await c.query("INSERT INTO job_outputs (job_id, name, asset_id) VALUES ($1, $2, $3)", [req.params.id, o.name, a.rows[0]!.id]);
         if (held) heldIds.push(a.rows[0]!.id);
