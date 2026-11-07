@@ -79,6 +79,7 @@
     "credits.insufficient": "Not enough credits for this job.",
     "job.not_cancellable": "This job has already finished.",
     "job.failed": "The job failed.",
+    "job.no_3d_worker": "No 3D-capable GPU worker is online right now. Try again later.",
     "worker.unauthorized": "Worker not authorised.",
     "worker.lease_lost": "The worker lost this job.",
     "model.unsupported": "This model is not supported.",
@@ -176,7 +177,8 @@
       "onnx": "ONNX model",
       "interpolate": "Interpolate",
       "depth_mesh": "Depth to 3D",
-      "render": "Render 3D"
+      "render": "Render 3D",
+      "image_to_3d": "Image to 3D"
     },
     "fields": {
       "amplitude": "Amplitude",
@@ -241,7 +243,9 @@
       "pitch": "Camera height",
       "fov": "Field of view",
       "background": "Background",
-      "lighting": "Lighting"
+      "lighting": "Lighting",
+      "texture": "Texture size",
+      "faces": "Triangle budget"
     },
     "problem": {
       "required": "Step {{step}}: {{field}} is needed.",
@@ -273,7 +277,8 @@
       "onnx": "An image model exported to ONNX: background removal, depth, upscaling, restoration, style",
       "interpolate": "RIFE in-between frames (each pass doubles the frame rate)",
       "depth_mesh": "A 3D relief of a picture, raised by its depth and textured with it",
-      "render": "Pictures of a 3D model: a still, or a turntable clip"
+      "render": "Pictures of a 3D model: a still, or a turntable clip",
+      "image_to_3d": "A whole 3D model from one picture (TRELLIS.2 on a GPU); a transparent background marks the object"
     }
   },
   "model": {

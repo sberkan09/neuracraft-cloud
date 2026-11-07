@@ -47,6 +47,10 @@ async function jobJson(s: Services, row: JobRow): Promise<Job> {
   };
 }
 
+const THREE_D_GRACE_SECONDS = 600;
+const THREE_D_WORKER =
+  "SELECT 1 FROM workers WHERE class = 'gpu' AND capabilities -> 'features' ? '3d' AND last_seen_at > now() - make_interval(secs => $1) LIMIT 1";
+
 export async function jobRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Body: { workflow?: unknown } }>("/v1/jobs", async (req, reply) => {
     const u = await requireUser(s.db, req);
@@ -54,6 +58,8 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
     const checked = await checkSubmittedWorkflow(s.db, u.id, req.body?.workflow, plan.limits);
     const workerClass = checked.workerClass;
     const reserve = cost(workerClass, plan.limits.maxSeconds);
+    // 3D models need a GPU worker with the 3D service; without one the job would wait forever.
+    if (workerClass === "gpu3d" && !(await s.db.query(THREE_D_WORKER, [THREE_D_GRACE_SECONDS])).rowCount) fail(503, "job.no_3d_worker");
     const row = await tx(s.db, async (c) => {
       await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
       const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);

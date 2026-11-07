@@ -231,6 +231,37 @@ describe("jobs", () => {
     assert.equal(await take(cpu), gen2);
   });
 
+  it("sends 3D model jobs only to GPU workers with the 3D service, and refuses them when there is none", async () => {
+    const a = await signUp(h.app);
+    const pic = await uploadPicture(h.app, a.cookie);
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");
+    await h.s.db.query("UPDATE workers SET last_seen_at = now() - interval '1 hour'");
+    const model = {
+      steps: [
+        { op: "load", path: `asset:${pic}`, out: "p" },
+        { op: "image_to_3d", in: "p", quality: "fast", out: "m" },
+        { op: "save", in: "m", path: "m.glb" },
+      ],
+    };
+    const submit = () => inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: model } });
+    const none = await submit();
+    assert.equal(none.statusCode, 503);
+    assert.equal(json(none).error.code, "job.no_3d_worker");
+
+    const register = async (payload: object) => json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload })).workerId;
+    const cpu = await register({ class: "cpu" });
+    const gpu = await register({ class: "gpu" });
+    const gpu3d = await register({ class: "gpu", features: ["3d"] });
+    const take = async (id: string) => json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId: id, waitSeconds: 0 } })).job?.jobId ?? null;
+    const job = json(await submit()).job;
+    assert.ok(job, "a 3D worker is around");
+    // no GPU seen lately: the CPU worker may take GPU jobs, but still never a 3D one
+    await h.s.db.query("UPDATE workers SET last_seen_at = now() - interval '10 minutes' WHERE class = 'gpu'");
+    assert.equal(await take(cpu), null);
+    assert.equal(await take(gpu), null, "a GPU worker without the 3D service leaves it");
+    assert.equal(await take(gpu3d), job.id);
+  });
+
   it("requeues jobs whose worker vanished, and fails them after three attempts", async () => {
     const { reapLeases } = await import("../src/scheduler.js");
     const a = await signUp(h.app);

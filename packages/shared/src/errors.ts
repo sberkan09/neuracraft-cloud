@@ -24,6 +24,7 @@ export const ErrorCodes = [
   "credits.insufficient",
   "job.not_cancellable",
   "job.failed",
+  "job.no_3d_worker",
   "worker.unauthorized",
   "worker.lease_lost",
   "model.unsupported",
