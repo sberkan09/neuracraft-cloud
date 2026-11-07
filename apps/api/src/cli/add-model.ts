@@ -1,5 +1,6 @@
 // Adds a model to the catalog (offered to everyone): a file, or a folder stored as a bundle.
-//   node dist/src/cli/add-model.js <file|folder> --kind onnx --license Apache-2.0 [--name "..."] [--entry model.onnx]
+//   node dist/src/cli/add-model.js <file|folder> --kind onnx --license Apache-2.0 [--name "..."] [--entry model.onnx] [--slug name]
+// --slug: the stable name presets use ("controlnet-scribble"); a catalog model with the same slug is retired.
 // Uses DATABASE_URL and the storage settings of the API.
 import { createReadStream } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
@@ -16,7 +17,7 @@ const opt = (k: string) => {
 const source = args[0];
 const kind = opt("kind"), license = opt("license");
 if (!source || !kind || !license) {
-  console.error("usage: add-model <file|folder> --kind <engine model kind> --license <license> [--name name] [--entry file]");
+  console.error("usage: add-model <file|folder> --kind <engine model kind> --license <license> [--name name] [--entry file] [--slug slug]");
   process.exit(2);
 }
 const config = loadConfig();
@@ -44,24 +45,27 @@ async function walk(dir: string, base = dir): Promise<string[]> {
 }
 
 const name = opt("name") ?? path.basename(source);
+const slug = opt("slug") ?? null;
+if (slug !== null && !/^[a-z0-9][a-z0-9.-]{0,63}$/.test(slug)) throw new Error("--slug: lower-case letters, digits, dots and dashes");
 const info = await stat(source);
 const id = await tx(db, async (c) => {
+  if (slug) await c.query("UPDATE assets SET status = 'removed' WHERE owner_id IS NULL AND slug = $1 AND status = 'ready'", [slug]);
   if (info.isDirectory()) {
     const files = await walk(source);
     const stored = [];
     for (const f of files) stored.push({ path: f.split(path.sep).join("/"), ...(await store(path.join(source, f))) });
     const total = stored.reduce((n, f) => n + f.bytes, 0);
     const a = await c.query<{ id: string }>(
-      "INSERT INTO assets (owner_id, kind, model_kind, name, bytes, license, entry) VALUES (NULL, 'model', $1, $2, $3, $4, $5) RETURNING id",
-      [kind, name, total, license, opt("entry") ?? null],
+      "INSERT INTO assets (owner_id, kind, model_kind, name, bytes, license, entry, slug) VALUES (NULL, 'model', $1, $2, $3, $4, $5, $6) RETURNING id",
+      [kind, name, total, license, opt("entry") ?? null, slug],
     );
     for (const f of stored) await c.query("INSERT INTO asset_files (asset_id, path, sha256, bytes) VALUES ($1, $2, $3, $4)", [a.rows[0]!.id, f.path, f.sha256, f.bytes]);
     return a.rows[0]!.id;
   }
   const b = await store(source);
   const a = await c.query<{ id: string }>(
-    "INSERT INTO assets (owner_id, kind, model_kind, name, sha256, bytes, license) VALUES (NULL, 'model', $1, $2, $3, $4, $5) RETURNING id",
-    [kind, path.basename(source), b.sha256, b.bytes, license],
+    "INSERT INTO assets (owner_id, kind, model_kind, name, sha256, bytes, license, slug) VALUES (NULL, 'model', $1, $2, $3, $4, $5, $6) RETURNING id",
+    [kind, name, b.sha256, b.bytes, license, slug],
   );
   return a.rows[0]!.id;
 });
