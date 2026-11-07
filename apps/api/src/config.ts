@@ -17,6 +17,7 @@ export interface Config {
   anthropicApiKey: string; // the prompt step's LLM (issue #17); "" = the template only
   promptModel: string;
   promptTimeoutMs: number;
+  moderationThresholds: string; // labels of the output classifier that hold a result: "nsfw=0.5"
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -40,5 +41,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     anthropicApiKey: env.ANTHROPIC_API_KEY ?? "",
     promptModel: env.PROMPT_MODEL ?? "claude-haiku-5-5",
     promptTimeoutMs: Number(env.PROMPT_TIMEOUT_MS ?? 3000),
+    moderationThresholds: env.MODERATION_THRESHOLDS ?? "nsfw=0.5",
   };
 }

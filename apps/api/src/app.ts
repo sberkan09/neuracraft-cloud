@@ -8,11 +8,13 @@ import { assetRoutes } from "./routes/assets.js";
 import { authRoutes } from "./routes/auth.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { presetRoutes } from "./routes/presets.js";
+import { reportRoutes } from "./routes/reports.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { storageRoutes } from "./routes/storage.js";
 import { workerRoutes } from "./routes/worker.js";
 import type { Storage } from "./storage.js";
 import { LlmPromptWriter, TemplatePromptWriter, type PromptWriter } from "./prompts.js";
+import { EngineModerator, parseThresholds, type Moderator } from "./moderation.js";
 
 export interface Services {
   config: Config;
@@ -20,6 +22,12 @@ export interface Services {
   storage: Storage;
   events: JobEvents;
   promptWriter?: PromptWriter; // default: Claude when ANTHROPIC_API_KEY is set, else the template
+  moderator?: Moderator; // default: the engine's classify scores against MODERATION_THRESHOLDS
+}
+
+export function moderatorFor(s: Services): Moderator {
+  s.moderator ??= new EngineModerator(parseThresholds(s.config.moderationThresholds));
+  return s.moderator;
 }
 
 export function promptWriterFor(s: Services): PromptWriter {
@@ -54,6 +62,7 @@ export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Pr
   await assetRoutes(app, s);
   await jobRoutes(app, s);
   await presetRoutes(app, s);
+  await reportRoutes(app, s);
   await tokenRoutes(app, s);
   await workerRoutes(app, s);
   await storageRoutes(app, s);

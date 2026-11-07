@@ -3,7 +3,7 @@
 // Keys: uploads/<id> while a file arrives, blobs/<sha256> once it is known (content-addressed).
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -17,6 +17,8 @@ export interface Storage {
   remove(key: string): Promise<void>;
   // Writes bytes the API already holds (inline uploads) to `key`.
   put(key: string, data: Buffer): Promise<void>;
+  // Reads a small object the API needs itself (a job's classifier scores).
+  get(key: string): Promise<Buffer>;
 }
 
 export const blobKey = (sha256: string) => `blobs/${sha256}`;
@@ -100,6 +102,10 @@ export class LocalStorage implements Storage {
     }
     await rename(tmp, p);
     return n;
+  }
+
+  async get(key: string): Promise<Buffer> {
+    return readFile(this.path(key));
   }
 
   read(key: string): Readable {

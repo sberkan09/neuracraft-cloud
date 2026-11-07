@@ -28,6 +28,7 @@ services:
       SECURE_COOKIES: ${SECURE_COOKIES:-0}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       PROMPT_MODEL: ${PROMPT_MODEL:-claude-haiku-5-5}
+      MODERATION_THRESHOLDS: ${MODERATION_THRESHOLDS:-nsfw=0.5}
     volumes:
       - storage:/data/storage
       - ${MODELS_DIR:-./models}:/models:ro

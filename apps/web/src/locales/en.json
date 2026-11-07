@@ -91,7 +91,10 @@
     "auth.token_revoked": "This access token was revoked.",
     "auth.token_expired": "This access token has expired.",
     "auth.scope_missing": "This access token may not do that (it needs {{scope}}).",
-    "content.text_refused": "This text cannot be used ({{field}})."
+    "content.text_refused": "This text cannot be used ({{field}}).",
+    "content.flagged": "The result was held by the content filter and is not shown. Nothing was charged.",
+    "content.unchecked": "The result could not be checked by the content filter, so it is not shown. Nothing was charged.",
+    "report.invalid": "This report cannot be sent ({{field}}: {{reason}})."
   },
   "nav": {
     "label": "Pages",

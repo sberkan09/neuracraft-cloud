@@ -1,0 +1,1 @@
+{"input": {"size": [2, 2]}, "output": {"labels": ["red", "green", "blue"], "activation": "none"}}

@@ -27,7 +27,7 @@ export interface JobRow {
 
 export async function jobJson(s: Services, row: JobRow): Promise<Job> {
   const outs = await s.db.query<{ name: string; asset_id: string; content_type: string; bytes: string }>(
-    "SELECT o.name, o.asset_id, a.content_type, a.bytes FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 ORDER BY o.name",
+    "SELECT o.name, o.asset_id, a.content_type, a.bytes FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 AND a.status = 'ready' ORDER BY o.name",
     [row.id],
   );
   return {

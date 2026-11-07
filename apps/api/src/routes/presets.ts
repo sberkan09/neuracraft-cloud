@@ -7,7 +7,7 @@ import { requireUser } from "../auth.js";
 import { tx } from "../db.js";
 import { fail } from "../errors.js";
 import { planFor } from "../plans.js";
-import { checkParams, findPreset, inlinePicture, presetJson, presets, type Models } from "../presets.js";
+import { checkParams, findPreset, inlinePicture, moderatedWorkflow, presetJson, presetModels, presets, type Models } from "../presets.js";
 
 import { checkSubmittedWorkflow } from "../workflow.js";
 import { jobJson, queueJob } from "./jobs.js";
@@ -42,10 +42,10 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
     }
     const found = await s.db.query<{ slug: string; id: string }>(
       "SELECT slug, id FROM assets WHERE owner_id IS NULL AND kind = 'model' AND status = 'ready' AND slug = ANY($1::text[])",
-      [preset.models],
+      [presetModels(preset)],
     );
     const models: Models = Object.fromEntries(found.rows.map((r) => [r.slug, r.id]));
-    const missing = preset.models.filter((m) => !models[m]);
+    const missing = presetModels(preset).filter((m) => !models[m]);
     if (missing.length) fail(503, "preset.unavailable", { models: missing.join(", ") });
 
     // The prompt: written from a narrative (LLM or template), or the client's own; both texts filtered
@@ -86,7 +86,7 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
         );
         refs[f.name] = a.rows[0]!.id;
       }
-      const checked = await checkSubmittedWorkflow(c, u.id, preset.workflow(params, refs, models), limits);
+      const checked = await checkSubmittedWorkflow(c, u.id, moderatedWorkflow(preset, params, refs, models), limits);
       return queueJob(s, c, u, checked, { limits, preset: { id: preset.id, version: preset.version }, promptInfo });
     });
     return reply.status(201).send({ job: await jobJson(s, row) });

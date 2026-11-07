@@ -190,6 +190,7 @@ std::string contentType(const std::string& name) {
     if (ends(".glb")) return "model/gltf-binary";
     if (ends(".obj")) return "model/obj";
     if (ends(".mtl")) return "model/mtl";
+    if (ends(".json")) return "application/json";
     return "application/octet-stream";
 }
 
@@ -315,14 +316,20 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
                 }
             }
 
-        const nc::WorkflowOp* saveOp = nc::findWorkflowOp("save");
-        const nc::WorkflowField* savePath = nullptr;
-        for (const auto& fd : saveOp->fields)
-            if (fd.name == "path") savePath = &fd;
+        // The files a step writes: a save's output and a classify step's scores, by name in out/.
+        auto pathField = [](const char* op) -> const nc::WorkflowField* {
+            if (const nc::WorkflowOp* o = nc::findWorkflowOp(op))
+                for (const auto& fd : o->fields)
+                    if (fd.name == "path") return &fd;
+            return nullptr;
+        };
+        const nc::WorkflowField* savePath = pathField("save");
+        const nc::WorkflowField* scoresPath = pathField("classify");
         const std::regex outputName("[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\.(png|jpe?g|gif|mov|glb|obj|ply)");  // the API's OUTPUT_NAME
+        const std::regex scoresName("[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\.json");                         // the API's SCORES_NAME
         const std::string text = nc::mapWorkflowFiles(nc::json::dump(job.at("workflow")), [&](const nc::WorkflowField& field, const std::string& v) {
-            if (&field == savePath) {
-                if (!std::regex_match(v, outputName)) throw std::invalid_argument("save: bad output name " + v);
+            if (&field == savePath || (scoresPath && &field == scoresPath)) {
+                if (!std::regex_match(v, &field == savePath ? outputName : scoresName)) throw std::invalid_argument("bad output name " + v);
                 return (dir / "out" / v).string();
             }
             if (v.rfind("asset:", 0) != 0 || !local.count(v.substr(6))) throw nc::WorkflowLimitExceeded("file " + v + " is not part of the job");
@@ -360,7 +367,7 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
             std::string last;
             for (const Value& st : job.at("workflow").at("steps").array) {
                 const std::string op = str(st, "op");
-                if (op == "save") continue;
+                if (op == "save" || op == "classify") continue;
                 last = str(st, "out").empty() ? op : str(st, "out");
             }
             auto it = clips.find(last);

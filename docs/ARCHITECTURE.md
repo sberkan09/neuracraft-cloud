@@ -144,7 +144,25 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
 
 * Every generated picture or video frame passes an output classifier (an ONNX model run by the
   engine itself) and every prompt a text filter before results are released; flagged results are
-  held for review. This is independent of which model made them.
+  held for review. This is independent of which model made them. Today this covers preset jobs
+  (`apps/api/src/moderation.ts`):
+  - **Classifier**: every preset workflow ends with the engine's `classify` step on its result
+    (catalog slug `nsfw-classifier`: Falconsai's ViT NSFW model, Apache-2.0), which writes
+    `moderation.json`. When the job completes, a score at or above `MODERATION_THRESHOLDS`
+    (`nsfw=0.5`) holds the result: the asset is `held` (listed, never downloadable), the job fails
+    with `content.flagged` and nothing is charged. A preset job without scores is held the same way
+    (`content.unchecked`). The scores are kept on the job (`jobs.moderation`); the file is not an output.
+  - **Text filter**: the prompt, negative prompt and narrative (and the prompt written from it) are
+    checked before anything is stored or reserved (`content.text_refused`).
+  - **Reports**: `POST /v1/assets/:id/report` with `{reason: sexual | violence_gore | hate |
+    minor_safety | other, note?: ≤ 500 characters}` answers 202 for the picture's owner, once per
+    asset and reporter (a repeat returns the same report), and 404 for anyone else or anything that
+    is not a generated picture. Scope `assets:read`. The report keeps a snapshot of the job: preset,
+    narrative and prompt, input assets, classifier scores.
+  - **Review**: held results land in the same queue as reports. Operators use `cli/review.js`
+    (`list`, `show` with links to the output and inputs, `dismiss`, `remove`, `flag-account`); every
+    action is logged in `moderation_log` with the operator's name. Flagging an account has no automatic
+    effect (bans and appeals are out of scope).
 * Acceptable-use policy and terms (users warrant rights to what they upload; repeat infringers are
   removed); notice-and-takedown (Turkey 5651 hosting-provider duties, DMCA, DSA); abuse reports.
 * Workers run in containers as non-root with a read-only root, memory / CPU / time limits, no
