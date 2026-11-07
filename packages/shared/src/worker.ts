@@ -12,6 +12,8 @@ export interface WorkerCapabilities {
   features?: string[];
   // Where it runs (WORKER_REGION, e.g. "eu"): jobs kept to regions go only to workers in one of them.
   region?: string;
+  // Kept for interactive jobs only (INTERACTIVE_ONLY=1): a long batch job never occupies it.
+  interactiveOnly?: boolean;
 }
 
 export interface WorkerRegisterResponse {

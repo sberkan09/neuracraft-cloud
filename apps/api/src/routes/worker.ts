@@ -76,9 +76,10 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     const workerClass = w.rows[0]?.class ?? fail(401, "worker.unauthorized");
     const features = Array.isArray(w.rows[0]?.capabilities?.features) ? w.rows[0]!.capabilities.features!.map(String) : [];
     const region = typeof w.rows[0]?.capabilities?.region === "string" ? w.rows[0]!.capabilities.region : "";
+    const interactiveOnly = w.rows[0]?.capabilities?.interactiveOnly === true;
     const deadline = Date.now() + Math.min(25, Math.max(0, Number(req.body.waitSeconds ?? 20))) * 1000;
     for (;;) {
-      const job = await claim(s.db, s.storage, workerId, workerClass, loadedModels.filter((m) => UUID.test(m)), features, region);
+      const job = await claim(s.db, s.storage, workerId, workerClass, loadedModels.filter((m) => UUID.test(m)), features, region, interactiveOnly);
       if (job || Date.now() >= deadline) return { job };
       await new Promise((r) => setTimeout(r, 500));
     }

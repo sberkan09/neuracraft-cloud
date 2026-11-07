@@ -983,6 +983,9 @@ describe("interactive jobs", () => {
     await h.s.db.query("UPDATE jobs SET state = 'queued', worker_id = NULL WHERE id = $1", [batch]);
     const gpu = await register("gpu");
     assert.equal((await claim(gpu)).jobId, interactive);
+    // A worker kept for interactive jobs leaves the batch job alone.
+    const kept = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test", interactiveOnly: true } })).workerId;
+    assert.equal(await claim(kept), null);
     assert.equal((await claim(gpu)).jobId, batch);
     const t = (await h.s.db.query("SELECT claimed_at, timings FROM jobs WHERE id = $1", [interactive])).rows[0];
     assert.ok(t.claimed_at);
