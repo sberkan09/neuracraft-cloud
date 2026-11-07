@@ -66,6 +66,8 @@ int main() {
                                                       {"memoryBytes", makeNumber(memory)},
                                                       {"engineVersion", makeString(NEURACRAFT_WORKER_ENGINE)}});
     if (nc::currentDevice() == nc::Device::GPU) capsValue.object.push_back({"gpu", makeString(nc::gpuName())});
+    // Where it runs (e.g. "eu" for a Runpod EU-* data centre): interactive presets can be kept to regions.
+    if (const std::string region = env("WORKER_REGION"); !region.empty()) capsValue.object.push_back({"region", makeString(region)});
     // Services next to a GPU worker (the engine's services/): the 3D service (NEURACRAFT_3D_URL) lets it
     // take image_to_3d jobs ("3d"), the rigging service (NEURACRAFT_RIG_URL) rig jobs ("rig"). Waits for
     // each service's model to load before saying so.

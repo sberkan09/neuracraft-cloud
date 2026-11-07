@@ -13,6 +13,7 @@ import { claim, LEASE_SECONDS } from "../scheduler.js";
 import { OUTPUT_FILE } from "../workflow.js";
 import { MODERATION_FILE, reportHeld, type Verdict } from "../moderation.js";
 import { blobKey } from "../storage.js";
+import { outputExpiry } from "../retention.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_OUTPUT = 2 * 1024 ** 3;
@@ -57,9 +58,10 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     );
     const workerClass = w.rows[0]?.class ?? fail(401, "worker.unauthorized");
     const features = Array.isArray(w.rows[0]?.capabilities?.features) ? w.rows[0]!.capabilities.features!.map(String) : [];
+    const region = typeof w.rows[0]?.capabilities?.region === "string" ? w.rows[0]!.capabilities.region : "";
     const deadline = Date.now() + Math.min(25, Math.max(0, Number(req.body.waitSeconds ?? 20))) * 1000;
     for (;;) {
-      const job = await claim(s.db, s.storage, workerId, workerClass, loadedModels.filter((m) => UUID.test(m)), features);
+      const job = await claim(s.db, s.storage, workerId, workerClass, loadedModels.filter((m) => UUID.test(m)), features, region);
       if (job || Date.now() >= deadline) return { job };
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -116,8 +118,8 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
       for (const o of outputs) {
         await c.query("INSERT INTO blobs (sha256, bytes) VALUES ($1, $2) ON CONFLICT DO NOTHING", [o.sha256, o.bytes]);
         const a = await c.query<{ id: string }>(
-          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes, status) VALUES ($1, 'output', $2, $3, $4, $5, $6) RETURNING id",
-          [j.user_id, o.name, String(o.contentType ?? "application/octet-stream").slice(0, 100), o.sha256, o.bytes, held ? "held" : "ready"],
+          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes, status, expires_at) VALUES ($1, 'output', $2, $3, $4, $5, $6, $7) RETURNING id",
+          [j.user_id, o.name, String(o.contentType ?? "application/octet-stream").slice(0, 100), o.sha256, o.bytes, held ? "held" : "ready", outputExpiry(j.preset)],
         );
         await c.query("INSERT INTO job_outputs (job_id, name, asset_id) VALUES ($1, $2, $3)", [req.params.id, o.name, a.rows[0]!.id]);
         if (held) heldIds.push(a.rows[0]!.id);

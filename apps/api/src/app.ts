@@ -37,8 +37,18 @@ export function promptWriterFor(s: Services): PromptWriter {
   return s.promptWriter;
 }
 
+// A request path for the logs: no query string, no signed storage token.
+export const logUrl = (url: string) => url.split("?")[0]!.replace(/^\/v1\/storage\/[^/]+/, "/v1/storage/<signed>");
+
 export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 2 << 20, trustProxy: true, routerOptions: { maxParamLength: 2048 } });
+  const app = Fastify({
+    // Request logs carry the method, the path (signed storage tokens cut out) and the status: never
+    // bodies (narratives, prompts, pictures), query strings or headers (issue #19).
+    logger: opts.logger ? { serializers: { req: (r: { method: string; url: string }) => ({ method: r.method, url: logUrl(r.url) }) } } : false,
+    bodyLimit: 2 << 20,
+    trustProxy: true,
+    routerOptions: { maxParamLength: 2048 },
+  });
   await app.register(cookie);
   // Uploads to signed storage URLs arrive as raw streams of any type.
   app.addContentTypeParser("*", (_req, payload, done) => done(null, payload));

@@ -121,7 +121,7 @@ export async function reportHeld(c: pg.PoolClient, jobId: string, ownerId: strin
 
 export interface ReportRow {
   id: string;
-  asset_id: string;
+  asset_id: string | null; // null once the asset was cleaned up (a resolved report)
   job_id: string | null;
   owner_id: string | null;
   owner_email: string | null;
@@ -134,13 +134,13 @@ export interface ReportRow {
   created_at: Date;
   resolved_at: Date | null;
   resolved_by: string | null;
-  asset_status: string;
-  asset_name: string;
+  asset_status: string | null;
+  asset_name: string | null;
   sha256: string | null;
 }
 
 const REPORT_SELECT = `SELECT r.*, u.email AS owner_email, u.flagged_at AS owner_flagged, a.status AS asset_status, a.name AS asset_name, a.sha256
-  FROM reports r JOIN assets a ON a.id = r.asset_id LEFT JOIN users u ON u.id = r.owner_id`;
+  FROM reports r LEFT JOIN assets a ON a.id = r.asset_id LEFT JOIN users u ON u.id = r.owner_id`;
 
 export async function listReports(q: Q, opts: { status?: "open" | "all"; limit?: number } = {}): Promise<ReportRow[]> {
   const r = await q.query<ReportRow>(
@@ -155,12 +155,12 @@ export async function showReport(q: Q, storage: Storage, id: string, seconds = 3
   const r = await q.query<ReportRow>(`${REPORT_SELECT} WHERE r.id = $1`, [id]);
   const row = r.rows[0];
   if (!row) return null;
-  const others = await q.query<{ n: string }>("SELECT count(*) AS n FROM reports WHERE asset_id = $1", [row.asset_id]);
+  const others = await q.query<{ n: string }>("SELECT count(*) AS n FROM reports WHERE asset_id = $1", [row.asset_id ?? "00000000-0000-0000-0000-000000000000"]);
   const inputs = (row.snapshot.inputs as { assetId: string; name: string; sha256: string | null }[] | undefined) ?? [];
   return {
     report: row,
     reportsOnAsset: Number(others.rows[0]!.n),
-    output: row.sha256 && row.asset_status !== "removed" ? storage.downloadUrl(blobKey(row.sha256), seconds, row.asset_name) : null,
+    output: row.sha256 && row.asset_status !== "removed" ? storage.downloadUrl(blobKey(row.sha256), seconds, row.asset_name ?? undefined) : null,
     inputs: inputs.map((i) => ({ ...i, url: i.sha256 ? storage.downloadUrl(blobKey(i.sha256), seconds, i.name) : null })),
   };
 }
@@ -194,6 +194,7 @@ export async function dismissReport(c: Q, id: string, operator: string, note?: s
 // on it is closed. The bytes go with the retention cleanup once nothing refers to them.
 export async function removeReportedAsset(c: Q, id: string, operator: string, note?: string): Promise<void> {
   const rep = await openReport(c, id);
+  if (!rep.asset_id) throw new Error(`report ${id}: the asset is already gone`);
   await c.query("UPDATE assets SET status = 'removed' WHERE id = $1", [rep.asset_id]);
   await c.query("UPDATE reports SET status = 'removed', resolved_at = now(), resolved_by = $2 WHERE asset_id = $1 AND status = 'open'", [rep.asset_id, operator]);
   await log(c, operator, "remove_asset", rep, note);

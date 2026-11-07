@@ -65,6 +65,19 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     return { user: u, credits: await balance(s.db, u.id) };
   });
 
+  // Deletes the account and everything it owns (issue #19): rows at once, the bytes with the next
+  // cleanup (retention.ts). The password confirms it (accounts without one confirm their email).
+  app.delete<{ Body: { password?: string; email?: string } }>("/v1/me", async (req, reply) => {
+    const u = await requireUser(s.db, req, "session");
+    const r = await s.db.query<{ password_hash: string | null }>("SELECT password_hash FROM users WHERE id = $1", [u.id]);
+    const hash = r.rows[0]?.password_hash ?? null;
+    const confirmed = hash ? await checkPassword(String(req.body?.password ?? ""), hash) : String(req.body?.email ?? "").trim().toLowerCase() === u.email;
+    if (!confirmed) fail(401, "auth.invalid_credentials");
+    await s.db.query("DELETE FROM users WHERE id = $1", [u.id]);
+    reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    return { ok: true };
+  });
+
   app.patch<{ Body: { locale?: string } }>("/v1/me", async (req) => {
     const u = await requireUser(s.db, req, "session");
     const locale = req.body?.locale;

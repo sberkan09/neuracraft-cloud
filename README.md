@@ -5,6 +5,7 @@ as a hosted service: many users at once, on a pool of CPU (and later GPU) worker
 demand.
 
 * [Architecture and decisions](docs/ARCHITECTURE.md)
+* [Data, retention and sub-processors](docs/PRIVACY.md)
 
 Status: milestone 2, the local MVP — accounts, uploads, jobs with live progress, a C++ worker running
 the engine in a sandbox, credits, English and Turkish.

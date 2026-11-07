@@ -61,7 +61,7 @@ export async function queueJob(
   c: pg.PoolClient,
   u: { id: string; plan: string },
   checked: CheckedWorkflow,
-  opts: { limits: JobLimits; preset?: { id: string; version: number }; promptInfo?: Record<string, unknown> | null },
+  opts: { limits: JobLimits; preset?: { id: string; version: number }; promptInfo?: Record<string, unknown> | null; regions?: string[] },
 ): Promise<JobRow> {
   const plan = planFor(u.plan);
   const reserve = cost(checked.workerClass, opts.limits.maxSeconds);
@@ -72,10 +72,10 @@ export async function queueJob(
   if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
   if ((await balance(c, u.id)) < reserve) fail(402, "credits.insufficient", { needed: reserve });
   const r = await c.query<JobRow>(
-    `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version, prompt_info)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version, prompt_info, regions)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
     [u.id, checked.workerClass, checked.features, plan.priority, JSON.stringify(checked.workflow), JSON.stringify(opts.limits), checked.models, checked.files,
-     opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null],
+     opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null, opts.regions ?? []],
   );
   await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
   await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });

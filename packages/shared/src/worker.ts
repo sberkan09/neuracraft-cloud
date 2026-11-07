@@ -10,6 +10,8 @@ export interface WorkerCapabilities {
   engineVersion: string;
   // Extra abilities: "3d" = a 3D service is attached (the engine's image_to_3d step works).
   features?: string[];
+  // Where it runs (WORKER_REGION, e.g. "eu"): jobs kept to regions go only to workers in one of them.
+  region?: string;
 }
 
 export interface WorkerRegisterResponse {
