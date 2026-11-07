@@ -1,7 +1,8 @@
 // Presets (issue #15): GET /v1/presets lists them; POST /v1/presets/:id/jobs submits one in a single
 // request, pictures inline (stored as the caller's assets in the same transaction) or as assets.
 import type { FastifyInstance } from "fastify";
-import type { Services } from "../app.js";
+import { promptWriterFor, type Services } from "../app.js";
+import { textAllowed, type SceneMode } from "../prompts.js";
 import { requireUser } from "../auth.js";
 import { tx } from "../db.js";
 import { fail } from "../errors.js";
@@ -20,7 +21,7 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
     const u = await requireUser(s.db, req, "jobs:submit");
     const preset = findPreset(req.params.id) ?? fail(404, "preset.unknown");
     const body = req.body ?? {};
-    const params = checkParams(preset, body.params, body.version);
+    let params = checkParams(preset, body.params, body.version);
     const given = body.inputs ?? {};
     if (typeof given !== "object" || given === null || Array.isArray(given)) fail(400, "preset.params_invalid", { field: "inputs", reason: "not an object" });
     for (const k of Object.keys(given as object))
@@ -47,6 +48,26 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
     const missing = preset.models.filter((m) => !models[m]);
     if (missing.length) fail(503, "preset.unavailable", { models: missing.join(", ") });
 
+    // The prompt: written from a narrative (LLM or template), or the client's own; both texts filtered
+    // before anything is stored or reserved.
+    const refuse = (field: string, text: unknown) => {
+      if (typeof text === "string" && !textAllowed(text).ok) fail(400, "content.text_refused", { field });
+    };
+    refuse("prompt", params.prompt);
+    refuse("negative", params.negative);
+    refuse("narrative", params.narrative);
+    let promptInfo: Record<string, unknown> | null = null;
+    if (typeof params.narrative === "string") {
+      const w = await promptWriterFor(s).write(params.narrative, params.mode as SceneMode);
+      refuse("narrative", w.prompt);
+      promptInfo = { narrative: params.narrative, prompt: w.prompt, negative: w.negative, source: w.source, instructions: w.instructions,
+        ...(w.fallbackReason ? { fallback: w.fallbackReason } : {}) };
+      const { narrative: _n, ...rest } = params;
+      params = { ...rest, prompt: w.prompt, negative: [params.negative, w.negative].filter(Boolean).join(", ") };
+    } else if (typeof params.prompt === "string") {
+      promptInfo = { prompt: params.prompt, source: "client" };
+    }
+
     const plan = planFor(u.plan);
     const limits = { ...plan.limits, maxSeconds: Math.min(plan.limits.maxSeconds, preset.maxSeconds(params)) };
     // Inline bytes go to storage first (content-addressed: harmless if the transaction then fails).
@@ -66,7 +87,7 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
         refs[f.name] = a.rows[0]!.id;
       }
       const checked = await checkSubmittedWorkflow(c, u.id, preset.workflow(params, refs, models), limits);
-      return queueJob(s, c, u, checked, { limits, preset: { id: preset.id, version: preset.version } });
+      return queueJob(s, c, u, checked, { limits, preset: { id: preset.id, version: preset.version }, promptInfo });
     });
     return reply.status(201).send({ job: await jobJson(s, row) });
   });

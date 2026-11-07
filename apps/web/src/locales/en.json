@@ -90,7 +90,8 @@
     "preset.unavailable": "This preset is not available right now (missing models: {{models}}).",
     "auth.token_revoked": "This access token was revoked.",
     "auth.token_expired": "This access token has expired.",
-    "auth.scope_missing": "This access token may not do that (it needs {{scope}})."
+    "auth.scope_missing": "This access token may not do that (it needs {{scope}}).",
+    "content.text_refused": "This text cannot be used ({{field}})."
   },
   "nav": {
     "label": "Pages",

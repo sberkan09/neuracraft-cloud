@@ -26,6 +26,8 @@ services:
       SIGNING_KEY: ${SIGNING_KEY:?set SIGNING_KEY}
       WORKER_TOKENS: ${WORKER_TOKEN:?set WORKER_TOKEN}
       SECURE_COOKIES: ${SECURE_COOKIES:-0}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PROMPT_MODEL: ${PROMPT_MODEL:-claude-haiku-5-5}
     volumes:
       - storage:/data/storage
       - ${MODELS_DIR:-./models}:/models:ro

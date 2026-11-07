@@ -90,7 +90,8 @@
     "preset.unavailable": "Bu hazır ayar şu anda kullanılamıyor (eksik modeller: {{models}}).",
     "auth.token_revoked": "Bu erişim anahtarı iptal edildi.",
     "auth.token_expired": "Bu erişim anahtarının süresi doldu.",
-    "auth.scope_missing": "Bu erişim anahtarının bunu yapmaya yetkisi yok ({{scope}} gerekiyor)."
+    "auth.scope_missing": "Bu erişim anahtarının bunu yapmaya yetkisi yok ({{scope}} gerekiyor).",
+    "content.text_refused": "Bu metin kullanılamaz ({{field}})."
   },
   "nav": {
     "label": "Sayfalar",
