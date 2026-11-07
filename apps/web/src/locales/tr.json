@@ -84,7 +84,10 @@
     "worker.lease_lost": "Worker bu işi kaybetti.",
     "model.unsupported": "Bu model desteklenmiyor.",
     "internal": "Bizim tarafımızda bir sorun oldu. Ücret alınmadı.",
-    "network": "Sunucuya ulaşılamıyor."
+    "network": "Sunucuya ulaşılamıyor.",
+    "preset.unknown": "Böyle bir hazır ayar yok.",
+    "preset.params_invalid": "Hazır ayar parametresi geçersiz: {{field}} ({{reason}}).",
+    "preset.unavailable": "Bu hazır ayar şu anda kullanılamıyor (eksik modeller: {{models}})."
   },
   "nav": {
     "label": "Sayfalar",
@@ -181,7 +184,8 @@
       "image_to_3d": "Resimden 3D",
       "rig": "Otomatik iskelet",
       "stereo": "Stereo 3D",
-      "animate": "Canlandır"
+      "animate": "Canlandır",
+      "scribble": "Karalama"
     },
     "fields": {
       "amplitude": "Salınım",
@@ -260,7 +264,10 @@
       "seconds": "Süre (sn)",
       "speed": "Hız",
       "in_place": "Yerinde",
-      "play": "Animasyonu oynat"
+      "play": "Animasyonu oynat",
+      "dark_strokes": "Koyu çizgiler",
+      "threshold": "Eşik",
+      "thickness": "Kalınlık"
     },
     "problem": {
       "required": "Adım {{step}}: {{field}} gerekli.",
@@ -296,7 +303,8 @@
       "image_to_3d": "Tek bir resimden tam bir 3D model (GPU'da TRELLIS.2); saydam arka plan nesneyi belirler",
       "rig": "3D modele iskelet ve deri ağırlıkları; poz verip canlandırmaya hazır (GPU'da SkinTokens)",
       "stereo": "Resim ya da videodan stereoskopik 3D: 3D TV'ler, VR oynatıcılar ve kırmızı-camgöbeği gözlükler için sol ve sağ göz görüntüleri",
-      "animate": "İskeletli bir figürü hareket kaydıyla oynatır (yürüme, koşu, dans...): iki iskelette de uzuvlar bulunur, kalça da hareket eder"
+      "animate": "İskeletli bir figürü hareket kaydıyla oynatır (yürüme, koşu, dans...): iki iskelette de uzuvlar bulunur, kalça da hareket eder",
+      "scribble": "Bir çizimi scribble ControlNet girdisine çevirir: çizgiler siyah üstüne beyaz, kalınlaştırılmış"
     },
     "choosePictureOrModel": "Bir resim ya da 3D model seç"
   },

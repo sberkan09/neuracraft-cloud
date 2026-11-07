@@ -318,3 +318,112 @@ describe("jobs", () => {
     assert.deepEqual(seen, ["state:cancelled"]);
   });
 });
+
+describe("presets", () => {
+  const catalog = async () => {
+    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"]])
+      await h.s.db.query(
+        "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
+        [kind, slug],
+      );
+  };
+  const sketch = { inline: PNG_1x1.toString("base64"), contentType: "image/png" };
+
+  it("lists presets with their parameters and versions", async () => {
+    const r = json(await inject({ method: "GET", url: "/v1/presets" }));
+    const p = r.presets.find((x: { id: string }) => x.id === "sketch_to_scene");
+    assert.equal(p.version, 1);
+    assert.deepEqual(p.params.mode.options, ["map", "atmosphere"]);
+    assert.equal(p.inputs[0].name, "sketch");
+  });
+
+  it("submits sketch_to_scene in one request with an inline sketch and a reservation sized for the preset", async () => {
+    const a = await signUp(h.app);
+    const submit = (params: object, inputs: object = { sketch }, extra: object = {}) =>
+      inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload: { params, inputs, ...extra } });
+    const missing = await submit({ mode: "map", prompt: "a bridge over a river" });
+    assert.equal(missing.statusCode, 503);
+    assert.equal(json(missing).error.code, "preset.unavailable");
+    await catalog();
+    // 5 credits left: a map job (30 s at the GPU rate = 5 credits) fits, an atmosphere job (60 s) does not.
+    await h.s.db.query("INSERT INTO ledger (user_id, kind, amount) VALUES ($1, 'settle', $2)", [a.id, -45000]);
+    const ok = await submit({ mode: "map", prompt: "top-down fantasy battle map, a wooden bridge over a river", seed: 7 });
+    assert.equal(ok.statusCode, 201, ok.body);
+    const job = json(ok).job;
+    const steps = job.workflow.steps.map((s: { op: string }) => s.op);
+    assert.deepEqual(steps, ["load", "resize", "scribble", "txt2img", "save"]);
+    const draw = job.workflow.steps[3];
+    assert.equal(draw.sampler, "lcm");
+    assert.equal(draw.steps, 4);
+    assert.equal(draw.control_scale, 0.9);
+    assert.equal(draw.seed, 7);
+    assert.equal(job.workflow.steps[4].path, "scene.png");
+    const reserved = await h.s.db.query("SELECT amount FROM ledger WHERE job_id = $1 AND kind = 'reserve'", [job.id]);
+    assert.equal(Number(reserved.rows[0].amount), -5000);
+    const row = (await h.s.db.query("SELECT preset, preset_version, worker_class, limits FROM jobs WHERE id = $1", [job.id])).rows[0];
+    assert.deepEqual([row.preset, row.preset_version, row.worker_class, row.limits.maxSeconds], ["sketch_to_scene", 1, "gpu", 30]);
+    // The sketch became the user's own asset.
+    const inputs = json(await inject({ method: "GET", url: "/v1/assets?kind=input", headers: { cookie: a.cookie } })).assets;
+    assert.ok(inputs.some((x: { name: string }) => x.name === "sketch.png"));
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE id = $1", [job.id]);
+    await h.s.db.query("INSERT INTO ledger (user_id, kind, amount, job_id) VALUES ($1, 'release', 5000, $2)", [a.id, job.id]);
+    const big = await submit({ mode: "atmosphere", prompt: "a misty forest river at dusk" });
+    assert.equal(big.statusCode, 402);
+    assert.equal(json(big).error.params.needed, 10000);
+    // A sketch already uploaded works too.
+    const pic = await uploadPicture(h.app, a.cookie);
+    assert.equal((await submit({ mode: "map", prompt: "a castle wall" }, { sketch: `asset:${pic}` })).statusCode, 201);
+  });
+
+  it("maps the parameters of older preset versions", async () => {
+    const { checkParams } = await import("../src/presets.js");
+    const v2 = {
+      id: "demo", version: 2, oldestVersion: 1, description: "", inputs: [], models: [], latency: "batch" as const,
+      params: { mode: { type: "enum" as const, options: ["map", "atmosphere"], required: true, doc: "" } },
+      maxSeconds: () => 10, workflow: () => ({ steps: [] }),
+      upgrade: (p: Record<string, unknown>) => ({ mode: p.style === "tactical" ? "map" : "atmosphere" }),  // v1 called it style
+    };
+    assert.deepEqual(checkParams(v2, { style: "tactical" }, 1), { mode: "map" });
+    assert.deepEqual(checkParams(v2, { mode: "atmosphere" }), { mode: "atmosphere" });
+    assert.throws(() => checkParams(v2, { style: "tactical" }));  // without the version: an unknown parameter
+    assert.throws(() => checkParams(v2, { mode: "map" }, 0));
+  });
+
+  it("refuses bad parameters and inputs before anything is stored, queued or reserved", async () => {
+    await catalog();
+    const a = await signUp(h.app);
+    const count = async () => Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1", [a.id])).rows[0].n);
+    const assets = async () => Number((await h.s.db.query("SELECT count(*) AS n FROM assets WHERE owner_id = $1", [a.id])).rows[0].n);
+    const cases: [object, string][] = [
+      [{ params: { mode: "map" }, inputs: { sketch } }, "prompt"],
+      [{ params: { mode: "night", prompt: "x" }, inputs: { sketch } }, "mode"],
+      [{ params: { mode: "map", prompt: "x", style: "y" }, inputs: { sketch } }, "style"],
+      [{ params: { mode: "map", prompt: "x".repeat(401) }, inputs: { sketch } }, "prompt"],
+      [{ params: { mode: "map", prompt: "x", size: 768 }, inputs: { sketch } }, "size"],
+      [{ params: { mode: "map", prompt: "x", seed: -1 }, inputs: { sketch } }, "seed"],
+      [{ params: { mode: "map", prompt: "x" }, inputs: {} }, "inputs.sketch"],
+      [{ params: { mode: "map", prompt: "x" }, inputs: { sketch, extra: sketch } }, "inputs.extra"],
+      [{ params: { mode: "map", prompt: "x" }, inputs: { sketch: { ...sketch, contentType: "image/gif" } } }, "inputs.sketch"],
+      [{ params: { mode: "map", prompt: "x" }, inputs: { sketch: { inline: Buffer.from("GIF89a....").toString("base64"), contentType: "image/png" } } }, "inputs.sketch"],
+      [{ params: { mode: "map", prompt: "x" }, inputs: { sketch: { inline: Buffer.alloc(600 * 1024).toString("base64"), contentType: "image/png" } } }, "inputs.sketch"],
+      [{ params: { mode: "map", prompt: "x" }, inputs: { sketch }, version: 2 }, "version"],
+    ];
+    for (const [payload, field] of cases) {
+      const r = await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload });
+      assert.equal(r.statusCode, 400, `${field}: ${r.body}`);
+      assert.equal(json(r).error.code, "preset.params_invalid");
+      assert.equal(json(r).error.params.field, field);
+    }
+    // A 2000 x 2000 PNG header: too big a picture.
+    const huge = Buffer.from(PNG_1x1);
+    huge.writeUInt32BE(2000, 16);
+    huge.writeUInt32BE(2000, 20);
+    const r = await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload: { params: { mode: "map", prompt: "x" }, inputs: { sketch: { inline: huge.toString("base64"), contentType: "image/png" } } } });
+    assert.equal(json(r).error.params.field, "inputs.sketch");
+    assert.equal((await inject({ method: "POST", url: "/v1/presets/nope/jobs", headers: { cookie: a.cookie }, payload: {} })).statusCode, 404);
+    assert.equal(await count(), 0);
+    assert.equal(await assets(), 0);
+    const credits = json(await inject({ method: "GET", url: "/v1/me", headers: { cookie: a.cookie } })).credits;
+    assert.equal(credits, 50000);
+  });
+});

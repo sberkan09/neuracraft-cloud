@@ -6,7 +6,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
 
 export interface Storage {
   // A URL the holder may PUT up to maxBytes to, or GET from, until `seconds` pass.
@@ -15,6 +15,8 @@ export interface Storage {
   // Moves an uploaded object to blobs/<sha256>; returns its hash and size.
   finalize(uploadKey: string): Promise<{ sha256: string; bytes: number }>;
   remove(key: string): Promise<void>;
+  // Writes bytes the API already holds (inline uploads) to `key`.
+  put(key: string, data: Buffer): Promise<void>;
 }
 
 export const blobKey = (sha256: string) => `blobs/${sha256}`;
@@ -71,6 +73,10 @@ export class LocalStorage implements Storage {
   }
 
   // Writes a stream (a signed PUT) to the key, refusing more than maxBytes.
+  async put(key: string, data: Buffer): Promise<void> {
+    await this.write(key, Readable.from([data]), data.length);
+  }
+
   async write(key: string, body: Readable, maxBytes: number): Promise<number> {
     const p = this.path(key);
     await mkdir(path.dirname(p), { recursive: true });

@@ -7,11 +7,13 @@ import { fail } from "../errors.js";
 import { publish } from "../events.js";
 import { balance, entry, settleJob } from "../ledger.js";
 import { cost, planFor } from "../plans.js";
-import { checkSubmittedWorkflow } from "../workflow.js";
+import { checkSubmittedWorkflow, type CheckedWorkflow } from "../workflow.js";
+import type { JobLimits } from "@neuracraft/shared";
+import type pg from "pg";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-interface JobRow {
+export interface JobRow {
   id: string;
   state: Job["state"];
   workflow: unknown;
@@ -23,7 +25,7 @@ interface JobRow {
   worker_seconds: number | null;
 }
 
-async function jobJson(s: Services, row: JobRow): Promise<Job> {
+export async function jobJson(s: Services, row: JobRow): Promise<Job> {
   const outs = await s.db.query<{ name: string; asset_id: string; content_type: string; bytes: string }>(
     "SELECT o.name, o.asset_id, a.content_type, a.bytes FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 ORDER BY o.name",
     [row.id],
@@ -51,30 +53,41 @@ const SERVICE_GRACE_SECONDS = 600;
 const SERVICE_WORKER =
   "SELECT 1 FROM workers WHERE class = 'gpu' AND capabilities -> 'features' ?& $1::text[] AND last_seen_at > now() - make_interval(secs => $2) LIMIT 1";
 
+// Queues a checked workflow for the user inside the caller's transaction: per-user concurrency, a
+// reservation for `limits.maxSeconds` of the job's worker class, the job row and its first event.
+// Steps run by a service (3D models, rigging) need a GPU worker with it; without one the job would wait forever.
+export async function queueJob(
+  s: Services,
+  c: pg.PoolClient,
+  u: { id: string; plan: string },
+  checked: CheckedWorkflow,
+  opts: { limits: JobLimits; preset?: { id: string; version: number } },
+): Promise<JobRow> {
+  const plan = planFor(u.plan);
+  const reserve = cost(checked.workerClass, opts.limits.maxSeconds);
+  if (checked.features.length && !(await c.query(SERVICE_WORKER, [checked.features, SERVICE_GRACE_SECONDS])).rowCount)
+    fail(503, "job.no_3d_worker", { services: checked.features.join(", ") });
+  await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
+  const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);
+  if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
+  if ((await balance(c, u.id)) < reserve) fail(402, "credits.insufficient", { needed: reserve });
+  const r = await c.query<JobRow>(
+    `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    [u.id, checked.workerClass, checked.features, plan.priority, JSON.stringify(checked.workflow), JSON.stringify(opts.limits), checked.models, checked.files,
+     opts.preset?.id ?? null, opts.preset?.version ?? null],
+  );
+  await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
+  await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });
+  return r.rows[0]!;
+}
+
 export async function jobRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Body: { workflow?: unknown } }>("/v1/jobs", async (req, reply) => {
     const u = await requireUser(s.db, req);
     const plan = planFor(u.plan);
     const checked = await checkSubmittedWorkflow(s.db, u.id, req.body?.workflow, plan.limits);
-    const workerClass = checked.workerClass;
-    const reserve = cost(workerClass, plan.limits.maxSeconds);
-    // Steps run by a service (3D models, rigging) need a GPU worker with it; without one the job would wait forever.
-    if (checked.features.length && !(await s.db.query(SERVICE_WORKER, [checked.features, SERVICE_GRACE_SECONDS])).rowCount)
-      fail(503, "job.no_3d_worker", { services: checked.features.join(", ") });
-    const row = await tx(s.db, async (c) => {
-      await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
-      const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);
-      if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
-      if ((await balance(c, u.id)) < reserve) fail(402, "credits.insufficient", { needed: reserve });
-      const r = await c.query<JobRow>(
-        `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [u.id, workerClass, checked.features, plan.priority, JSON.stringify(checked.workflow), JSON.stringify(plan.limits), checked.models, checked.files],
-      );
-      await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
-      await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });
-      return r.rows[0]!;
-    });
+    const row = await tx(s.db, (c) => queueJob(s, c, u, checked, { limits: plan.limits }));
     return reply.status(201).send({ job: await jobJson(s, row) });
   });
 

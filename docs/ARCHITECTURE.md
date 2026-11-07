@@ -88,6 +88,20 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
   returns true and the engine stops between denoising steps or frames.
 * **Results** are assets owned by the job's user: pictures and clips, and 3D models (`.glb` is shown in
   a 3D viewer in the browser; `.obj` comes with its `.mtl` and texture, `.ply` with vertex colours).
+* **Presets** (`apps/api/src/presets.ts`): native clients do not build workflows. They name a preset and
+  its parameters, and the server builds the workflow, so settings are tuned once for every client and
+  an app in the stores cannot be broken by a model or field change. `GET /v1/presets` lists them with
+  their parameter schemas and versions. `POST /v1/presets/:id/jobs` takes `{params, inputs, version?}`:
+  - Inputs are an `asset:<id>`, or an inline PNG (base64, up to 512 KB and 1024 x 1024) stored as the
+    caller's asset in the same transaction. That is one round trip instead of three.
+  - A preset's `maxSeconds` sizes the reservation and the time limit, not the plan's maximum: a 1 s job
+    no longer needs 300 s of credits.
+  - Parameters of older versions are mapped (`upgrade`) for at least one version.
+  - Models are catalog slugs; the job records the preset and its version.
+
+  `sketch_to_scene` v1 turns a terrain sketch plus an English prompt into a 512 x 512 scene (scribble
+  ControlNet on DreamShaper 8). `map` uses 4 LCM steps and keeps the layout (30 s reserved);
+  `atmosphere` uses 20 steps and is freer (60 s).
 
 ## Worker protocol (HTTP + JSON, `Authorization: Bearer <worker token>`)
 
