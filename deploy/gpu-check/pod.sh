@@ -43,7 +43,7 @@ export DATABASE_URL=postgres://nc:nc@127.0.0.1:5432/neuracraft STORAGE_DIR=/data
 node apps/api/dist/src/main.js > /tmp/api.log 2>&1 &
 until curl -sf localhost:8080/v1/health > /dev/null; do sleep 1; done
 step "models"
-ENGINE=/build/_deps/neuracraft-src
+ENGINE=/build/_deps/neuracraft-src; [ -n "${ENGINE_BRANCH:-}" ] && ENGINE=/nc
 MODELS_DIR=/models IN_CONTAINER=/models ADD="node apps/api/dist/src/cli/add-model.js" bash deploy/catalog/sketch-to-scene.sh "$ENGINE" > /tmp/models.log 2>&1 \
     || { tail -30 /tmp/models.log; sleep infinity; }
 du -sh /models/* | sed 's/^/  /'
@@ -62,6 +62,7 @@ cat > /tmp/wf.json <<WF
  {"op": "save", "in": "b", "path": "/tmp/b.png"}]}
 WF
 "$NC" --gpu --profile workflow /tmp/wf.json 2>&1 | grep -v "^  *$" | tail -60
+[ -n "${TESTS_PID:-}" ] && wait "$TESTS_PID"  # (the engine tests, so they do not slow the latency run)
 step "workers"
 # Two worker processes share the GPU: each gets a weight budget of its own (the default is 60 % of
 # the device per process, so two would run out of memory).
@@ -74,7 +75,6 @@ sleep 5
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 step "check"
 API=http://127.0.0.1:8080 node deploy/gpu-check/latency.mjs "$JOBS" 2>&1
-[ -n "${TESTS_PID:-}" ] && wait "$TESTS_PID"
 step "server percentiles"
 node apps/api/dist/src/cli/latency.js --hours 2
 psql "$DATABASE_URL" -Atc "SELECT preset_variant, timings FROM jobs WHERE preset IS NOT NULL ORDER BY created_at LIMIT 8"
