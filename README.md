@@ -42,6 +42,11 @@ docker compose -f deploy/docker-compose.yml exec api \
   node apps/api/dist/src/cli/add-model.js /models/u2netp --kind onnx --license Apache-2.0 --entry u2netp.onnx
 ```
 
+Catalog models can carry a stable `--slug`, which presets refer to; adding another model with the same
+slug retires the old one. `deploy/catalog/sketch-to-scene.sh /path/to/NeuraCraft` downloads and adds the
+`sketch_to_scene` preset's four (DreamShaper 8, ControlNet scribble, LCM-LoRA, TAESD), each with its
+license.
+
 Motion captures for the animate step are catalog models of kind `mocap` (`.bvh`). The engine's
 `scripts/download_cmu_motions.sh` fetches five from CMU's free database (walk, run, jump, dance,
 cartwheel):

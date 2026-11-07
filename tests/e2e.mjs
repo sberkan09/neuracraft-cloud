@@ -142,14 +142,22 @@ try {
     const up = await call("POST", "/v1/assets", { name: "figure.glb", kind: "input", bytes: glb.length, contentType: "model/gltf-binary" });
     assert.equal((await fetch(api + up.body.uploadUrl, { method: "PUT", body: glb, headers: { "content-type": "model/gltf-binary" } })).status, 200);
     assert.equal((await call("POST", `/v1/assets/${up.body.asset.id}/complete`)).status, 200);
-    let motionId = "";
-    const add = spawn("node", [path.join(root, "apps/api/dist/src/cli/add-model.js"), path.join(root, "tests/assets/stick-motion.bvh"), "--kind", "mocap", "--license", "own", "--name", "wave"], {
-      env: { ...process.env, STORAGE_DIR: path.join(data, "storage") },
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    add.stdout.on("data", (d) => (motionId += d));
-    await new Promise((r) => add.on("exit", r));
-    motionId = motionId.trim();
+    // Added twice under one slug: the second replaces the first in the catalog.
+    const addMotion = async () => {
+      let out = "";
+      const add = spawn("node", [path.join(root, "apps/api/dist/src/cli/add-model.js"), path.join(root, "tests/assets/stick-motion.bvh"), "--kind", "mocap", "--license", "own", "--name", "wave", "--slug", "wave"], {
+        env: { ...process.env, STORAGE_DIR: path.join(data, "storage") },
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      add.stdout.on("data", (d) => (out += d));
+      await new Promise((r) => add.on("exit", r));
+      return out.trim();
+    };
+    const firstMotion = await addMotion();
+    const motionId = await addMotion();
+    const waves = (await call("GET", "/v1/catalog")).body.models.filter((m) => m.slug === "wave");
+    assert.deepEqual(waves.map((m) => [m.id, m.name]), [[motionId, "wave"]]);
+    assert.notEqual(firstMotion, motionId);
     const j5 = await call("POST", "/v1/jobs", { workflow: { steps: [
       { op: "load", path: `asset:${up.body.asset.id}`, out: "fig" },
       { op: "animate", in: "fig", capture: `asset:${motionId}`, fps: 10, out: "moving" },

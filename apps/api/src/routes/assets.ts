@@ -23,6 +23,7 @@ interface AssetRow {
   status: string;
   created_at: Date;
   owner_id: string | null;
+  slug?: string | null;
 }
 export const assetJson = (a: AssetRow) => ({
   id: a.id,
@@ -35,6 +36,7 @@ export const assetJson = (a: AssetRow) => ({
   status: a.status,
   createdAt: a.created_at.toISOString(),
   catalog: a.owner_id === null,
+  ...(a.slug ? { slug: a.slug } : {}),
 });
 
 async function magic(s: Services, key: string): Promise<Buffer> {
