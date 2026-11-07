@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Job } from "@neuracraft/shared";
-import { api, type Asset } from "../api";
+import { api, isModelFile, type Asset } from "../api";
 import { tasks } from "../tasks";
 import { useErrorText } from "../useError";
 import { JobCard } from "./JobCard";
@@ -22,7 +22,8 @@ export function Home({ openStudio }: { openStudio: (workflow: unknown) => void }
   const fileInput = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
-    const [me, pics, cat, js] = await Promise.all([api.me(), api.assets("input"), api.catalog(), api.jobs()]);
+    const [me, inputs, cat, js] = await Promise.all([api.me(), api.assets("input"), api.catalog(), api.jobs()]);
+    const pics = { assets: inputs.assets.filter((a) => !isModelFile(a)) };
     setCredits(me.credits);
     setPictures(pics.assets);
     setModels(cat.models);

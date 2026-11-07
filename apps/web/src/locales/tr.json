@@ -180,7 +180,8 @@
       "render": "3D görüntü",
       "image_to_3d": "Resimden 3D",
       "rig": "Otomatik iskelet",
-      "stereo": "Stereo 3D"
+      "stereo": "Stereo 3D",
+      "animate": "Canlandır"
     },
     "fields": {
       "amplitude": "Salınım",
@@ -253,7 +254,13 @@
       "focus": "Ekran düzlemi",
       "smooth": "Yumuşatma",
       "stereo": "Stereo 3D",
-      "eye": "Göz açısı"
+      "eye": "Göz açısı",
+      "capture": "Hareket",
+      "start": "Başlangıç (sn)",
+      "seconds": "Süre (sn)",
+      "speed": "Hız",
+      "in_place": "Yerinde",
+      "play": "Animasyonu oynat"
     },
     "problem": {
       "required": "Adım {{step}}: {{field}} gerekli.",
@@ -288,8 +295,10 @@
       "render": "Bir 3D modelin görüntüleri: tek kare ya da dönen bir klip",
       "image_to_3d": "Tek bir resimden tam bir 3D model (GPU'da TRELLIS.2); saydam arka plan nesneyi belirler",
       "rig": "3D modele iskelet ve deri ağırlıkları; poz verip canlandırmaya hazır (GPU'da SkinTokens)",
-      "stereo": "Resim ya da videodan stereoskopik 3D: 3D TV'ler, VR oynatıcılar ve kırmızı-camgöbeği gözlükler için sol ve sağ göz görüntüleri"
-    }
+      "stereo": "Resim ya da videodan stereoskopik 3D: 3D TV'ler, VR oynatıcılar ve kırmızı-camgöbeği gözlükler için sol ve sağ göz görüntüleri",
+      "animate": "İskeletli bir figürü hareket kaydıyla oynatır (yürüme, koşu, dans...): iki iskelette de uzuvlar bulunur, kalça da hareket eder"
+    },
+    "choosePictureOrModel": "Bir resim ya da 3D model seç"
   },
   "model": {
     "loading": "3D görüntüleyici yükleniyor…",

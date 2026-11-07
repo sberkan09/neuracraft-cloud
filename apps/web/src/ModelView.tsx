@@ -26,6 +26,7 @@ export function ModelView({ src, label }: { src: string; label: string }) {
     alt: label,
     "camera-controls": "",
     "auto-rotate": "",
+    autoplay: "",  // animated models (the animate step) play
     "rotation-per-second": "20deg",
     "shadow-intensity": "0.6",
     "interaction-prompt": "none",

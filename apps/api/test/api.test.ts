@@ -61,6 +61,17 @@ describe("assets", () => {
   it("refuses what is not a picture, uploads past the declared size, and forged URLs", async () => {
     const a = await signUp(h.app);
     await assert.rejects(uploadPicture(h.app, a.cookie, Buffer.from("GIF89a not a png")));
+    // 3D models (.glb) are inputs too, checked by their bytes; motion captures (.bvh) are models of kind mocap.
+    const glb = Buffer.concat([Buffer.from("glTF"), Buffer.from([2, 0, 0, 0, 20, 0, 0, 0])]);
+    await uploadPicture(h.app, a.cookie, glb, "figure.glb");
+    await assert.rejects(uploadPicture(h.app, a.cookie, PNG_1x1, "figure.glb"));
+    await assert.rejects(uploadPicture(h.app, a.cookie, glb, "figure.png"));
+    const bvh = Buffer.from("HIERARCHY\nROOT Hips\n");
+    const m = await inject({ method: "POST", url: "/v1/assets", headers: { cookie: a.cookie }, payload: { name: "walk.bvh", kind: "model", bytes: bvh.length, license: "CMU" } });
+    assert.equal(m.statusCode, 201);
+    assert.equal(json(m).asset.modelKind, "mocap");
+    await inject({ method: "PUT", url: local(json(m).uploadUrl), payload: bvh, headers: { "content-type": "application/octet-stream" } });
+    assert.equal((await inject({ method: "POST", url: `/v1/assets/${json(m).asset.id}/complete`, headers: { cookie: a.cookie } })).statusCode, 200);
     const r = await inject({ method: "POST", url: "/v1/assets", headers: { cookie: a.cookie }, payload: { name: "x.png", kind: "input", bytes: 4 } });
     const put = await inject({ method: "PUT", url: local(json(r).uploadUrl), payload: Buffer.alloc(100), headers: { "content-type": "application/octet-stream" } });
     assert.equal(put.statusCode, 413);

@@ -314,7 +314,7 @@ export function Studio(props: { workflow: Workflow; onWorkflow(wf: Workflow): vo
               </label>
             ) : null}
             {selOp.fields.filter((f) => f.name !== "out").map((f) => (
-              <FieldInput key={`${selected}-${f.name}`} id={`insp-${f.name}`} field={fieldFor(f)} value={sel[f.name]} clips={clipsBefore(steps, ops, selected)}
+              <FieldInput key={`${selected}-${f.name}`} id={`insp-${f.name}`} op={sel.op} field={fieldFor(f)} value={sel[f.name]} clips={clipsBefore(steps, ops, selected)}
                 models={models} pictures={pictures} onPicture={(a) => setPictures((p) => [a, ...p])} onChange={(v) => update(selected, f.name, v)} />
             ))}
           </>

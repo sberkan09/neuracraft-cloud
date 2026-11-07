@@ -42,6 +42,18 @@ docker compose -f deploy/docker-compose.yml exec api \
   node apps/api/dist/src/cli/add-model.js /models/u2netp --kind onnx --license Apache-2.0 --entry u2netp.onnx
 ```
 
+Motion captures for the animate step are catalog models of kind `mocap` (`.bvh`). The engine's
+`scripts/download_cmu_motions.sh` fetches five from CMU's free database (walk, run, jump, dance,
+cartwheel):
+
+```
+bash path/to/NeuraCraft/scripts/download_cmu_motions.sh deploy/models/motions
+for m in walk run jump dance cartwheel; do
+  docker compose -f deploy/docker-compose.yml exec api node apps/api/dist/src/cli/add-model.js /models/motions/$m.bvh \
+    --kind mocap --license "CMU Graphics Lab Motion Capture Database (free for research and commercial use)" --name "$m"
+done
+```
+
 Without Docker (Node 22, PostgreSQL 16, CMake, libcurl):
 
 ```

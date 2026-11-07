@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { EngineField } from "@neuracraft/shared";
-import { api, type Asset } from "../api";
+import { api, isModelFile, type Asset } from "../api";
 import { useErrorText } from "../useError";
 
 export function useFieldLabel() {
@@ -21,6 +21,7 @@ export function modelsFor(field: EngineField, models: Asset[]) {
 
 export function FieldInput(props: {
   id: string;
+  op: string; // the step's op
   field: EngineField;
   value: unknown;
   onChange(v: unknown): void;
@@ -95,13 +96,16 @@ export function FieldInput(props: {
       );
     }
     case "file": {
-      const picked = props.pictures.find((p) => p.id === assetId(value));
+      // load also reads 3D models (.glb); other file fields take pictures.
+      const models3d = props.op === "load";
+      const choices = props.pictures.filter((p) => models3d || !isModelFile(p));
+      const picked = choices.find((p) => p.id === assetId(value));
       const upload = async (file?: File) => {
         if (!file) return;
         setUploading(true);
         setUploadError("");
         try {
-          const a = await api.uploadPicture(file);
+          const a = /\.glb$/i.test(file.name) ? await api.uploadModelFile(file) : await api.uploadPicture(file);
           props.onPicture(a);
           onChange(assetRef(a.id));
         } catch (e) {
@@ -114,14 +118,15 @@ export function FieldInput(props: {
         <div className="field">
           {head}
           <div className="picture-field">
-            {picked ? <img src={api.content(picked.id)} alt="" /> : null}
+            {picked && !isModelFile(picked) ? <img src={api.content(picked.id)} alt="" /> : null}
             <select id={id} aria-label={label(f.name)} value={unset ? "" : String(value)} onChange={(e) => onChange(e.target.value || undefined)}>
-              <option value="">{t("studio.choosePicture")}</option>
-              {props.pictures.map((p) => <option key={p.id} value={assetRef(p.id)}>{p.name}</option>)}
+              <option value="">{t(models3d ? "studio.choosePictureOrModel" : "studio.choosePicture")}</option>
+              {choices.map((p) => <option key={p.id} value={assetRef(p.id)}>{p.name}</option>)}
               {!unset && !picked ? <option value={String(value)}>{t("studio.unknownAsset")}</option> : null}
             </select>
           </div>
-          <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => void upload(e.target.files?.[0])} />
+          <input ref={fileInput} type="file" accept={models3d ? "image/png,image/jpeg,image/webp,.glb,model/gltf-binary" : "image/png,image/jpeg,image/webp"} hidden
+            onChange={(e) => void upload(e.target.files?.[0])} />
           <button type="button" className="ghost small" disabled={uploading} onClick={() => fileInput.current?.click()}>
             {uploading ? t("home.uploading") : t("home.upload")}
           </button>
