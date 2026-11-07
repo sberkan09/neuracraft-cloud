@@ -3,7 +3,7 @@
 // 1. a cold job (the worker has no models loaded yet);
 // 2. quality samples: each of the six spike sketches (tests/assets/sketches) in map mode (two seeds),
 //    atmosphere mode, and map mode from the Turkish narrative (the server writes the prompt);
-// 3. the preset's workflow with and without int8 weights (as plain jobs), to tune the preset;
+// 3. the preset's workflow as a plain job without the classifier, to see what it costs;
 // 4. latency: JOBS map-mode jobs one after another, submission to succeeded, while a long batch job
 //    (a 48-frame morph) runs on the other GPU worker.
 // Prints the numbers, the server's per-preset percentiles and links to every sample picture.
@@ -75,16 +75,16 @@ for (const n of names) {
   }
 }
 
-// 3. int8 or not: the preset's own workflow as a plain job
-console.log("\n== int8 ==");
+// 3. the preset's workflow as a plain job: no classifier step (what it costs)
+console.log("\n== without the classifier ==");
 const sample = (await call("GET", `/v1/jobs/${warmAgain.job.id}`)).body.job.workflow;
-for (const int8 of [true, false, true, false, true, false]) {
-  const steps = sample.steps.filter((s) => s.op !== "classify").map((s) => (s.op === "txt2img" ? { ...s, int8, seed: 3 } : s));
+const bare = sample.steps.filter((s) => s.op !== "classify");
+for (let k = 0; k < 3; k++) {
   const t0 = performance.now();
-  const r = await call("POST", "/v1/jobs", { workflow: { steps } });
-  if (r.status !== 201) { console.log(`int8=${int8}: ${r.status} ${JSON.stringify(r.body)}`); continue; }
+  const r = await call("POST", "/v1/jobs", { workflow: { steps: bare } });
+  if (r.status !== 201) { console.log(`plain: ${r.status} ${JSON.stringify(r.body)}`); break; }
   const j = await wait(call, r.body.job.id);
-  console.log(`int8=${int8}: ${fmt(performance.now() - t0)} ${j.state} worker ${j.workerSeconds?.toFixed(2)} s ${await link(call, j)}`);
+  console.log(`plain job: ${fmt(performance.now() - t0)} ${j.state} worker ${j.workerSeconds?.toFixed(2)} s`);
 }
 
 // 4. latency under a batch job
