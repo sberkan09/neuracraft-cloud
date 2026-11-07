@@ -9,7 +9,7 @@ endif()
 
 # The engine, at the version this service is tested with. NEURACRAFT_DIR=<checkout> builds a local
 # copy instead (engine development).
-set(NEURACRAFT_COMMIT dad04d96ad128a1e6cab44f9d017e7c45d7d47d4 CACHE STRING "NeuraCraft commit the worker builds")
+set(NEURACRAFT_COMMIT 9c1f86599063acb4a785492ac8008895e741e159 CACHE STRING "NeuraCraft commit the worker builds")
 set(NEURACRAFT_DIR "" CACHE PATH "Local NeuraCraft checkout (instead of NEURACRAFT_COMMIT)")
 set(NEURACRAFT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 # -DNEURACRAFT_USE_CUDA=ON builds a GPU worker (the engine's CUDA backend; needs the CUDA toolkit).
