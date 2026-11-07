@@ -94,7 +94,8 @@ const sketchToScene: Preset = {
       tiny_vae: asset(m.taesd!),
       out: "scene",
     };
-    if (map) Object.assign(draw, { steps: 4, sampler: "lcm", guidance: 1.5, lora: [asset(m["lcm-lora-sd15"]!)] });
+    // The LoRA with its scale (":1"): without one, the engine took an asset id starting with a digit for a scale.
+    if (map) Object.assign(draw, { steps: 4, sampler: "lcm", guidance: 1.5, lora: [`${asset(m["lcm-lora-sd15"]!)}:1`] });
     else Object.assign(draw, { steps: 20, sampler: "euler", guidance: 7 });
     return {
       steps: [

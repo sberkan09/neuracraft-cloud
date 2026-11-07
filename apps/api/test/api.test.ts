@@ -361,6 +361,7 @@ describe("presets", () => {
     assert.equal(draw.steps, 4);
     assert.equal(draw.control_scale, 0.9);
     assert.equal(draw.seed, 7);
+    assert.match(draw.lora[0], /^asset:[0-9a-f-]{36}:1$/);
     assert.equal(job.workflow.steps[4].path, "scene.png");
     const reserved = await h.s.db.query("SELECT amount FROM ledger WHERE job_id = $1 AND kind = 'reserve'", [job.id]);
     assert.equal(Number(reserved.rows[0].amount), -5000);
