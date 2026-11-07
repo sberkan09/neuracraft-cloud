@@ -56,7 +56,8 @@ changes.
   `sketch_to_scene`) are claimed before batch jobs of the same priority and never by a CPU worker.
   When no GPU worker (in `INTERACTIVE_REGIONS`, if set) has been seen for `INTERACTIVE_GRACE_SECONDS`
   (60), they are refused at submission with `job.no_gpu_worker` instead of waiting. A worker counts
-  as seen while it claims work or heartbeats a running job. A worker started with
+  as seen while it claims work or heartbeats a running job. `INTERACTIVE_ON_CPU=1`, for development
+  and the e2e test only, lets CPU workers take them. The compose stack sets it; production must not. A worker started with
   `INTERACTIVE_ONLY=1` takes nothing else, so it keeps the preset's models loaded and never sits
   behind a long batch job.
   - **Timings**: each job records where its time went (`jobs.timings`). The server measures queue wait

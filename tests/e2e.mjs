@@ -45,7 +45,7 @@ function png(w, h, rgb) {
 }
 
 const server = spawn("node", [path.join(root, "apps/api/dist/src/main.js")], {
-  env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", STORAGE_DIR: path.join(data, "storage"), WORKER_TOKENS: token },
+  env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", STORAGE_DIR: path.join(data, "storage"), WORKER_TOKENS: token, INTERACTIVE_ON_CPU: "1" },
   stdio: ["ignore", "ignore", "inherit"],
 });
 let cookie = "";
@@ -204,6 +204,41 @@ try {
     assert.ok(Math.abs(scores.scores.red - 200 / 255) < 1e-3 && Math.abs(scores.scores.blue - 10 / 255) < 1e-3, JSON.stringify(scores));
   }
 
+  // 5c. the sketch_to_scene preset on the engine's tiny models (tests/assets/tiny, written by the
+  // engine's tiny_model_fixtures_on_request), both modes: inline sketch -> scribble ControlNet ->
+  // LCM-LoRA (map) / 20 steps (atmosphere) -> TAESD -> the content classifier -> scene.png.
+  {
+    const addModel = async (args) => {
+      let out = "";
+      const add = spawn("node", [path.join(root, "apps/api/dist/src/cli/add-model.js"), ...args], {
+        env: { ...process.env, STORAGE_DIR: path.join(data, "storage") },
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      add.stdout.on("data", (d) => (out += d));
+      const code = await new Promise((r) => add.on("exit", r));
+      assert.equal(code, 0, `add-model ${args.join(" ")}`);
+      return out.trim();
+    };
+    const tiny = (p) => path.join(root, "tests/assets/tiny", p);
+    await addModel([tiny("sd"), "--kind", "sd", "--license", "test", "--slug", "dreamshaper-8"]);
+    await addModel([tiny("controlnet"), "--kind", "controlnet", "--license", "test", "--slug", "controlnet-scribble"]);
+    await addModel([tiny("lcm-lora.safetensors"), "--kind", "lora", "--license", "test", "--slug", "lcm-lora-sd15"]);
+    await addModel([tiny("taesd"), "--kind", "taesd", "--license", "test", "--slug", "taesd"]);
+    await addModel([path.join(root, "tests/assets/nsfw-tiny"), "--kind", "onnx", "--license", "test", "--entry", "nsfw.onnx", "--slug", "nsfw-classifier"]);
+    const sketch = { inline: readFileSync(path.join(root, "tests/assets/sketches/kopru.png")).toString("base64"), contentType: "image/png" };
+    for (const params of [{ mode: "map", narrative: "Nehrin üzerinde ahşap bir köprü", seed: 1 }, { mode: "atmosphere", prompt: "a misty forest river", seed: 2 }]) {
+      const sub = await call("POST", "/v1/presets/sketch_to_scene/jobs", { params, inputs: { sketch } });
+      assert.equal(sub.status, 201, JSON.stringify(sub.body));
+      assert.equal(await runWorker(), 0);
+      const done = (await call("GET", `/v1/jobs/${sub.body.job.id}`)).body.job;
+      assert.equal(done.state, "succeeded", JSON.stringify(done));
+      assert.deepEqual(done.outputs.map((o) => o.name), ["scene.png"]);  // the classifier's scores are not an output
+      const png = Buffer.from(await (await fetch(api + (await call("GET", `/v1/assets/${done.outputs[0].assetId}/content`)).headers.get("location"))).arrayBuffer());
+      assert.equal(png.readUInt32BE(16), 512);
+      assert.equal(png.readUInt32BE(20), 512);
+    }
+  }
+
   // 6. workers sharing one cache (docker compose replicas on one volume): six users upload the same
   // picture (one blob), six workers start on an empty cache at once and fetch it together; a tiny
   // CACHE_MAX_GB makes each trim the cache while the others are still using it.
@@ -277,7 +312,7 @@ try {
   }
 
   const me = (await call("GET", "/v1/me")).body;
-  assert.ok(me.credits < 50000 && me.credits > 49000, String(me.credits));
+  assert.ok(me.credits < 50000 && me.credits > 40000, String(me.credits));  // (the preset jobs are billed at the GPU rate)
   console.log("e2e: ok (credits left", me.credits, ")");
 } finally {
   server.kill();
