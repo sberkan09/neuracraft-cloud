@@ -27,7 +27,7 @@ if [ -n "${ENGINE_BRANCH:-}" ]; then
 fi
 cmake -S worker -B /build -DCMAKE_BUILD_TYPE=Release -DNEURACRAFT_USE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$ARCH" $ENGINE_FLAG > /tmp/cmake.log 2>&1 \
     && cmake --build /build --parallel "$(nproc)" --target neuracraft-worker NeuraCraft > /tmp/build.log 2>&1 || { tail -30 /tmp/cmake.log /tmp/build.log; sleep infinity; }
-NC=$(find /build /nc/bin -name NeuraCraft -type f -perm -u+x 2>/dev/null | head -1)
+NC=$(find /cloud/worker/bin /build /nc/bin -name NeuraCraft -type f -perm -u+x 2>/dev/null | head -1)  # (CMAKE_SOURCE_DIR/bin)
 if [ -n "${ENGINE_BRANCH:-}" ]; then
     ( cmake -S /nc -B /nc/build-cuda -DCMAKE_BUILD_TYPE=Release -DNEURACRAFT_USE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$ARCH" > /tmp/cmake-t.log 2>&1 \
       && cmake --build /nc/build-cuda --parallel "$(nproc)" --target neuracraft_tests > /tmp/build-t.log 2>&1 \
@@ -67,7 +67,9 @@ step "workers"
 # Two worker processes share the GPU: each gets a weight budget of its own (the default is 60 % of
 # the device per process, so two would run out of memory).
 for w in interactive general; do
-    extra="KEEP_MODELS=3"; [ "$w" = interactive ] && extra="INTERACTIVE_ONLY=1 KEEP_MODELS=8"
+    # KEEP_MODELS >= 6: the preset loads 5-6 models (text encoder, UNet with and without the LCM-LoRA,
+    # ControlNet, TAESD, classifier); with fewer, every job reloads some (~6 s).
+    extra="KEEP_MODELS=8"; [ "$w" = interactive ] && extra="INTERACTIVE_ONLY=1 KEEP_MODELS=8"
     env API_URL=http://127.0.0.1:8080 WORKER_TOKEN=gpu-check WORKER_CLASS=gpu NEURACRAFT_CUDA_WEIGHTS_GB=${WEIGHTS_GB:-7} CACHE_DIR=/data/cache-$w WORK_DIR=/data/jobs-$w $extra \
         /build/neuracraft-worker > /tmp/worker-$w.log 2>&1 &
 done

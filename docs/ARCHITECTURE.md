@@ -64,6 +64,15 @@ changes.
     engine's `modelLoadSeconds()`), running and uploading, and the claim notes whether the worker
     already held the job's models (`warm`).
   - **Operators**: `cli/latency.js` prints p50 / p95 per preset and mode.
+  - **Warm capacity**: one GPU worker kept for interactive jobs (`INTERACTIVE_ONLY=1`,
+    `KEEP_MODELS=8`) stays on during the hours a partner's app is used, rather than scaling to zero.
+    Measured on an RTX 4090 ([docs/reports/sketch-to-scene.md](reports/sketch-to-scene.md)):
+    - warm: about 2.5 s for a map-mode picture; 50 jobs while a batch job shared the GPU: p50 3.8 s,
+      p95 6.3 s;
+    - cold: 35 s (downloading 3.3 GB of models, then loading them).
+
+    Cheap 16–24 GB cards are enough. Two worker processes on one GPU each need
+    `NEURACRAFT_CUDA_WEIGHTS_GB`.
 * **3D GPU workers** — a GPU worker with the engine's services beside it
   (`deploy/worker-gpu3d.Dockerfile`, on 127.0.0.1): the 3D service (TRELLIS.2, `NEURACRAFT_3D_URL`)
   and the rigging service (SkinTokens, `NEURACRAFT_RIG_URL`). Once a service has loaded its model the
