@@ -40,6 +40,9 @@ export interface Asset {
   catalog: boolean;
 }
 
+// Inputs are pictures or 3D models (.glb).
+export const isModelFile = (a: { name: string }) => /\.glb$/i.test(a.name);
+
 export const api = {
   me: () => call<{ user: User; credits: number }>("GET", "/v1/me"),
   signup: (email: string, password: string, locale: string) => call<{ user: User }>("POST", "/v1/auth/signup", { email, password, locale }),
@@ -54,6 +57,15 @@ export const api = {
   content: (assetId: string) => `/v1/assets/${assetId}/content`,
 
   // A picture: converted to PNG in the browser (the engine reads PNG), then uploaded to a signed URL.
+  // A 3D model (.glb), as it is.
+  async uploadModelFile(file: File): Promise<Asset> {
+    const name = file.name.replace(/\.[^.]*$/, "") + ".glb";
+    const start = await call<{ asset: Asset; uploadUrl: string }>("POST", "/v1/assets", { name, kind: "input", bytes: file.size, contentType: "model/gltf-binary" });
+    const put = await fetch(start.uploadUrl, { method: "PUT", body: file, headers: { "content-type": "model/gltf-binary" } });
+    if (!put.ok) throw new ApiError(put.status === 413 ? "request.too_large" : "internal");
+    return (await call<{ asset: Asset }>("POST", `/v1/assets/${start.asset.id}/complete`)).asset;
+  },
+
   async uploadPicture(file: File): Promise<Asset> {
     const png = await toPng(file);
     const name = file.name.replace(/\.[^.]*$/, "") + ".png";

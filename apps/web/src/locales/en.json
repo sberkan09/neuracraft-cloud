@@ -180,7 +180,8 @@
       "render": "Render 3D",
       "image_to_3d": "Image to 3D",
       "rig": "Auto-rig",
-      "stereo": "Stereo 3D"
+      "stereo": "Stereo 3D",
+      "animate": "Animate"
     },
     "fields": {
       "amplitude": "Amplitude",
@@ -253,7 +254,13 @@
       "focus": "Screen plane",
       "smooth": "Smoothing",
       "stereo": "Stereo 3D",
-      "eye": "Eye angle"
+      "eye": "Eye angle",
+      "capture": "Motion",
+      "start": "Start (s)",
+      "seconds": "Length (s)",
+      "speed": "Speed",
+      "in_place": "In place",
+      "play": "Play the animation"
     },
     "problem": {
       "required": "Step {{step}}: {{field}} is needed.",
@@ -288,8 +295,10 @@
       "render": "Pictures of a 3D model: a still, or a turntable clip",
       "image_to_3d": "A whole 3D model from one picture (TRELLIS.2 on a GPU); a transparent background marks the object",
       "rig": "A skeleton and skin weights for a 3D model, ready to pose and animate (SkinTokens on a GPU)",
-      "stereo": "Stereoscopic 3D from pictures or video: left and right eye views for 3D TVs, VR players and red-cyan glasses"
-    }
+      "stereo": "Stereoscopic 3D from pictures or video: left and right eye views for 3D TVs, VR players and red-cyan glasses",
+      "animate": "Moves a rigged figure with motion capture (walk, run, dance...): limbs found on both skeletons, the hips carried along"
+    },
+    "choosePictureOrModel": "Choose a picture or a 3D model"
   },
   "model": {
     "loading": "Loading the 3D viewer…",

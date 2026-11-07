@@ -9,7 +9,7 @@ const MAX_INPUT = 64 << 20;
 const MAX_MODEL = 8 * 1024 ** 3;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // The engine reads PNG and PPM / PGM pictures, safetensors and ONNX models.
-const MODEL_EXT = /\.(safetensors|onnx)$/i;
+const MODEL_EXT = /\.(safetensors|onnx|bvh)$/i;  // (.bvh: motion capture, the engine's "mocap" models)
 
 interface AssetRow {
   id: string;
@@ -68,7 +68,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
       const r = await s.db.query<AssetRow>(
         `INSERT INTO assets (owner_id, kind, model_kind, name, content_type, bytes, license, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'uploading') RETURNING *`,
-        [u.id, kind, kind === "model" ? (b.modelKind ?? null) : null, name, String(b.contentType ?? "application/octet-stream").slice(0, 100), bytes, b.license ?? null],
+        [u.id, kind, kind === "model" ? (/\.bvh$/i.test(name) ? "mocap" : (b.modelKind ?? null)) : null, name, String(b.contentType ?? "application/octet-stream").slice(0, 100), bytes, b.license ?? null],
       );
       const asset = r.rows[0]!;
       return reply.status(201).send({ asset: assetJson(asset), uploadUrl: s.storage.uploadUrl(`uploads/${asset.id}`, bytes, 3600) });
@@ -83,12 +83,21 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
     const a = r.rows[0] ?? fail(404, "not_found");
     const key = `uploads/${a.id}`;
     const head = await magic(s, key).catch(() => fail(400, "request.invalid", { reason: "nothing uploaded" }));
-    if (a.kind === "input" && head.length) {
+    // Inputs are pictures (PNG, PPM) or 3D models (.glb); motion captures (.bvh) are text. The name's
+    // extension is what the engine goes by, so it has to match the bytes.
+    if (head.length) {
+      const glbName = /\.glb$/i.test(a.name), bvhName = /\.bvh$/i.test(a.name);
       const png = head[0] === 0x89 && head.toString("latin1", 1, 4) === "PNG";
       const ppm = head[0] === 0x50 && (head[1] === 0x35 || head[1] === 0x36);
-      if (!png && !ppm) {
+      const glb = head.toString("latin1", 0, 4) === "glTF";
+      const bvh = head.toString("latin1", 0, 8) === "HIERARCH";
+      const why =
+        a.kind === "input" && glbName && !glb ? "not a glTF binary" :
+        a.kind === "input" && !glbName && !png && !ppm ? "not a PNG or PPM picture" :
+        a.kind === "model" && bvhName && !bvh ? "not a BVH motion capture" : "";
+      if (why) {
         await s.storage.remove(key);
-        fail(400, "request.invalid", { reason: "not a PNG or PPM picture" });
+        fail(400, "request.invalid", { reason: why });
       }
     }
     const { sha256, bytes } = await s.storage.finalize(key);

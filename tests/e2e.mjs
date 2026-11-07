@@ -2,7 +2,7 @@
 // (WORKER_BIN). A user signs up, uploads a picture, submits workflows, the worker runs them, the
 // results come back. Run: node tests/e2e.mjs
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -135,7 +135,40 @@ try {
     assert.equal(cut[25], 6, "an RGBA picture");
   }
 
-  // 5. workers sharing one cache (docker compose replicas on one volume): six users upload the same
+  // 5. a 3D model the user brings (.glb input), animated with a catalog motion capture (mocap model):
+  // a rigged stick figure and a motion of our own (tests/assets).
+  {
+    const glb = readFileSync(path.join(root, "tests/assets/stick-figure.glb"));
+    const up = await call("POST", "/v1/assets", { name: "figure.glb", kind: "input", bytes: glb.length, contentType: "model/gltf-binary" });
+    assert.equal((await fetch(api + up.body.uploadUrl, { method: "PUT", body: glb, headers: { "content-type": "model/gltf-binary" } })).status, 200);
+    assert.equal((await call("POST", `/v1/assets/${up.body.asset.id}/complete`)).status, 200);
+    let motionId = "";
+    const add = spawn("node", [path.join(root, "apps/api/dist/src/cli/add-model.js"), path.join(root, "tests/assets/stick-motion.bvh"), "--kind", "mocap", "--license", "own", "--name", "wave"], {
+      env: { ...process.env, STORAGE_DIR: path.join(data, "storage") },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    add.stdout.on("data", (d) => (motionId += d));
+    await new Promise((r) => add.on("exit", r));
+    motionId = motionId.trim();
+    const j5 = await call("POST", "/v1/jobs", { workflow: { steps: [
+      { op: "load", path: `asset:${up.body.asset.id}`, out: "fig" },
+      { op: "animate", in: "fig", capture: `asset:${motionId}`, fps: 10, out: "moving" },
+      { op: "render", in: "moving", width: 32, height: 32, out: "clip" },
+      { op: "save", in: "moving", path: "moving.glb" },
+      { op: "save", in: "clip", path: "clip.gif" },
+    ] } });
+    assert.equal(j5.status, 201, JSON.stringify(j5.body));
+    assert.equal(await runWorker(), 0);
+    const done5 = (await call("GET", `/v1/jobs/${j5.body.job.id}`)).body.job;
+    assert.equal(done5.state, "succeeded", JSON.stringify(done5));
+    const model = done5.outputs.find((o) => o.name === "moving.glb");
+    assert.equal(model.kind, "model");
+    const bytes = Buffer.from(await (await fetch(api + (await call("GET", `/v1/assets/${model.assetId}/content`)).headers.get("location"))).arrayBuffer());
+    assert.equal(bytes.toString("latin1", 0, 4), "glTF");
+    assert.ok(bytes.toString("latin1").includes('"animations"'), "the animation is in the model");
+  }
+
+  // 6. workers sharing one cache (docker compose replicas on one volume): six users upload the same
   // picture (one blob), six workers start on an empty cache at once and fetch it together; a tiny
   // CACHE_MAX_GB makes each trim the cache while the others are still using it.
   const owner = cookie;
