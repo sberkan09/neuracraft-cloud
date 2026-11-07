@@ -79,7 +79,7 @@
     "credits.insufficient": "Bu iş için yeterli kredin yok.",
     "job.not_cancellable": "Bu iş zaten bitti.",
     "job.failed": "İş başarısız oldu.",
-    "job.no_3d_worker": "Şu anda 3D modeli üretebilecek bir GPU çalışanı yok. Biraz sonra yeniden dene.",
+    "job.no_3d_worker": "Bu işin gerektirdiği servislere ({{services}}) sahip bir GPU çalışanı şu anda yok. Biraz sonra yeniden dene.",
     "worker.unauthorized": "Worker yetkili değil.",
     "worker.lease_lost": "Worker bu işi kaybetti.",
     "model.unsupported": "Bu model desteklenmiyor.",
@@ -178,7 +178,9 @@
       "interpolate": "Ara kare üret",
       "depth_mesh": "Derinlikten 3D",
       "render": "3D görüntü",
-      "image_to_3d": "Resimden 3D"
+      "image_to_3d": "Resimden 3D",
+      "rig": "Otomatik iskelet",
+      "stereo": "Stereo 3D"
     },
     "fields": {
       "amplitude": "Salınım",
@@ -245,7 +247,13 @@
       "background": "Arka plan",
       "lighting": "Işıklandırma",
       "texture": "Doku boyutu",
-      "faces": "Üçgen sayısı"
+      "faces": "Üçgen sayısı",
+      "postprocess": "Ağırlıkları yumuşat",
+      "layout": "Düzen",
+      "focus": "Ekran düzlemi",
+      "smooth": "Yumuşatma",
+      "stereo": "Stereo 3D",
+      "eye": "Göz açısı"
     },
     "problem": {
       "required": "Adım {{step}}: {{field}} gerekli.",
@@ -278,7 +286,9 @@
       "interpolate": "RIFE ile ara kareler (her geçiş kare hızını iki katına çıkarır)",
       "depth_mesh": "Bir resmin derinliğiyle yükseltilip resmin kendisiyle kaplanan 3D kabartması",
       "render": "Bir 3D modelin görüntüleri: tek kare ya da dönen bir klip",
-      "image_to_3d": "Tek bir resimden tam bir 3D model (GPU'da TRELLIS.2); saydam arka plan nesneyi belirler"
+      "image_to_3d": "Tek bir resimden tam bir 3D model (GPU'da TRELLIS.2); saydam arka plan nesneyi belirler",
+      "rig": "3D modele iskelet ve deri ağırlıkları; poz verip canlandırmaya hazır (GPU'da SkinTokens)",
+      "stereo": "Resim ya da videodan stereoskopik 3D: 3D TV'ler, VR oynatıcılar ve kırmızı-camgöbeği gözlükler için sol ve sağ göz görüntüleri"
     }
   },
   "model": {

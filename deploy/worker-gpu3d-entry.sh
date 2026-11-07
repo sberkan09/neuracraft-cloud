@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Starts the 3D service (local only), then the worker; the worker reports the "3d" feature once the
-# service has loaded its model. When either stops, the container stops (and is restarted).
+# Starts the 3D and rigging services (local only), then the worker; the worker reports the "3d" and
+# "rig" features once the services have loaded their models. When any of them stops, the container
+# stops (and is restarted).
 set -euo pipefail
-/opt/trellis2/run.sh &
-service=$!
+PORT=8188 /opt/trellis2/run.sh &
+trellis=$!
+PORT=8189 /opt/skintokens/run.sh &
+rigging=$!
 neuracraft-worker &
 worker=$!
-trap 'kill -TERM "$worker" "$service" 2> /dev/null' TERM INT
-wait -n "$service" "$worker" || true
-kill -TERM "$worker" "$service" 2> /dev/null || true
+trap 'kill -TERM "$worker" "$trellis" "$rigging" 2> /dev/null' TERM INT
+wait -n "$trellis" "$rigging" "$worker" || true
+kill -TERM "$worker" "$trellis" "$rigging" 2> /dev/null || true
 wait
 exit 1

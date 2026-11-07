@@ -52,12 +52,14 @@ changes.
   inpaint, t2v, morph, zoom, outpaint, upscale, interpolate) are GPU jobs; a GPU worker takes them
   first and CPU jobs when there are none, and CPU workers take GPU jobs only while no GPU worker has
   been seen for a minute (slow, but nothing waits forever). GPU time is billed at the GPU rate.
-* **3D GPU workers** — a GPU worker with the engine's 3D service beside it
-  (`deploy/worker-gpu3d.Dockerfile`: TRELLIS.2 on 127.0.0.1, `NEURACRAFT_3D_URL`). Once the service
-  has loaded its model the worker registers with `features: ["3d"]`. Jobs with an `image_to_3d` step
-  are 3D jobs (`worker_class` `gpu3d`): only such workers take them, before GPU and CPU jobs, and
-  never a CPU worker. A 3D job is refused at submission (`job.no_3d_worker`) when no 3D worker has
-  been seen for ten minutes. Billed at the GPU rate.
+* **3D GPU workers** — a GPU worker with the engine's services beside it
+  (`deploy/worker-gpu3d.Dockerfile`, on 127.0.0.1): the 3D service (TRELLIS.2, `NEURACRAFT_3D_URL`)
+  and the rigging service (SkinTokens, `NEURACRAFT_RIG_URL`). Once a service has loaded its model the
+  worker registers with its feature (`features: ["3d", "rig"]`). Jobs record the services their steps
+  need (`jobs.features`: `image_to_3d` → 3d, `rig` → rig); only workers reporting all of them take
+  such a job, before their other work, and never a CPU worker. A job is refused at submission
+  (`job.no_3d_worker`) when no worker with its services has been seen for ten minutes. Billed at the
+  GPU rate.
 * **Warm models** — a worker keeps the models of its last jobs loaded (`KEEP_MODELS`, default 2),
   their weights resident in GPU memory, and reports them when it asks for work; the scheduler then
   prefers jobs that need those models.
