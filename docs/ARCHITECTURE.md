@@ -103,6 +103,20 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
   ControlNet on DreamShaper 8). `map` uses 4 LCM steps and keeps the layout (30 s reserved);
   `atmosphere` uses 20 steps and is freer (60 s).
 
+  Instead of `prompt`, a client can send a `narrative` in any language (`apps/api/src/prompts.ts`):
+  - **Writing the prompt**: Claude (`ANTHROPIC_API_KEY`, `PROMPT_MODEL`; only the API holds the key)
+    writes an English prompt about the terrain and setting only, since creatures are tokens the app
+    draws. The prompt carries the mode's style words, stays under 60 words and comes with a negative
+    prompt. Instructions are versioned (`sketch_to_scene/1`).
+  - **Cleaning**: phrases naming creatures are dropped, and missing style words are added.
+  - **Fallback**: when the LLM is not set, takes over 3 s or answers badly, a template built from a
+    Turkish / English terrain dictionary is used, so the job always runs.
+  - **Text filter**: both the narrative and the prompt go through it before anything is stored or
+    reserved (`content.text_refused`).
+  - **Record**: the job keeps the narrative, the prompt, who wrote it and the instruction version
+    (`jobs.prompt_info`).
+  - **Price**: the LLM call is part of the preset's price.
+
 ## Worker protocol (HTTP + JSON, `Authorization: Bearer <worker token>`)
 
 | call | what |

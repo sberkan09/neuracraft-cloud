@@ -32,6 +32,8 @@ export interface Preset {
   latency: "interactive" | "batch";
   maxSeconds(params: Record<string, unknown>): number; // the reservation and the time limit
   workflow(params: Record<string, unknown>, inputs: Record<string, string>, models: Models): { steps: Record<string, unknown>[] };
+  // A check across parameters, after each one is checked (a message naming the field, or null).
+  check?(params: Record<string, unknown>): { field: string; reason: string } | null;
   // Parameters of an older version -> the current one (absent: only the current version).
   upgrade?(params: Record<string, unknown>, from: number): Record<string, unknown>;
   oldestVersion?: number;
@@ -47,7 +49,12 @@ const sketchToScene: Preset = {
     "(scribble ControlNet, 4 LCM steps); atmosphere is prettier and freer (20 steps).",
   params: {
     mode: { type: "enum", options: ["map", "atmosphere"], required: true, doc: "map: keeps the layout; atmosphere: freer, prettier" },
-    prompt: { type: "string", maxLength: 400, required: true, doc: "What the scene is, in English" },
+    prompt: { type: "string", maxLength: 400, doc: "What the scene is, in English (or give narrative instead)" },
+    narrative: {
+      type: "string",
+      maxLength: 500,
+      doc: "The scene told in any language (Turkish too); the server writes the English prompt (terrain only, no creatures)",
+    },
     negative: { type: "string", maxLength: 300, doc: "What to avoid" },
     seed: { type: "int", min: 0, max: 4294967295, doc: "Noise seed (default: random)" },
     size: { type: "int", min: 512, max: 512, doc: "Picture size (512 only in v1)" },
@@ -55,6 +62,12 @@ const sketchToScene: Preset = {
   inputs: [{ name: "sketch", doc: "Terrain sketch: dark strokes on light paper, PNG", contentTypes: ["image/png"], maxBytes: 512 * 1024, maxSide: 1024 }],
   models: ["dreamshaper-8", "controlnet-scribble", "lcm-lora-sd15", "taesd"],
   latency: "interactive",
+  check: (p) =>
+    p.prompt === undefined && p.narrative === undefined
+      ? { field: "prompt", reason: "prompt or narrative is required" }
+      : p.prompt !== undefined && p.narrative !== undefined
+        ? { field: "narrative", reason: "give prompt or narrative, not both" }
+        : null,
   maxSeconds: (p) => (p.mode === "atmosphere" ? 60 : 30),
   workflow(p, inputs, m) {
     const map = p.mode === "map";
@@ -125,6 +138,8 @@ export function checkParams(preset: Preset, input: unknown, version?: unknown): 
     }
     out[k] = v;
   }
+  const cross = preset.check?.(out);
+  if (cross) bad(cross.field, cross.reason);
   return out;
 }
 

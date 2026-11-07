@@ -31,6 +31,7 @@ export const ErrorCodes = [
   "preset.unknown",
   "preset.params_invalid",
   "preset.unavailable",
+  "content.text_refused",
   "worker.unauthorized",
   "worker.lease_lost",
   "model.unsupported",

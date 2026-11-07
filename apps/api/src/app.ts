@@ -12,12 +12,21 @@ import { tokenRoutes } from "./routes/tokens.js";
 import { storageRoutes } from "./routes/storage.js";
 import { workerRoutes } from "./routes/worker.js";
 import type { Storage } from "./storage.js";
+import { LlmPromptWriter, TemplatePromptWriter, type PromptWriter } from "./prompts.js";
 
 export interface Services {
   config: Config;
   db: Db;
   storage: Storage;
   events: JobEvents;
+  promptWriter?: PromptWriter; // default: Claude when ANTHROPIC_API_KEY is set, else the template
+}
+
+export function promptWriterFor(s: Services): PromptWriter {
+  s.promptWriter ??= s.config.anthropicApiKey
+    ? new LlmPromptWriter(s.config.anthropicApiKey, s.config.promptModel, s.config.promptTimeoutMs)
+    : new TemplatePromptWriter();
+  return s.promptWriter;
 }
 
 export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Promise<FastifyInstance> {

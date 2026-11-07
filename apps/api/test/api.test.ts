@@ -478,3 +478,105 @@ describe("tokens", () => {
     assert.equal((await inject({ method: "POST", url: "/v1/tokens", headers: { cookie: a.cookie }, payload: { scopes: ["jobs:read"] } })).statusCode, 400);
   });
 });
+
+describe("prompt step", () => {
+  // GM Cebi's spike narratives (docs/spikes/sketch-to-scene/scenes.json there).
+  const spike: [string, string, string][] = [
+      ["kopru", "Kurt sürüsü nehrin karşı yakasında, ahşap köprünün başında pusu kurmuş. Akşam, sisli bir orman.", "bridge"],
+      ["han", "Kalabalık bir handa kavga çıkıyor. Tezgâhın önünde üç haydut, masalar devrilmiş, merdiven yukarı çıkıyor.", "tavern"],
+      ["zindan", "Dar bir zindan koridoru köşeyi dönüyor. Ortada bir çukur tuzak, köşenin ardında bir iskelet bekliyor.", "dungeon"],
+      ["orman-yolu", "Orman yolunda bir at arabası. Ağaçların arasından haydutlar oklarla saldırıyor.", "forest"],
+      ["magara", "Kayalık bir yamaçta mağara girişi. Önünde büyük kayalar, aşağıda bir dere. Mağaradan bir ogre çıkıyor.", "cave"],
+      ["sur", "Kale surları ve kapı. İki kulede okçular, kahramanlar yoldan kapıya yaklaşıyor.", "castle walls"],
+  ];
+  const creatures = ["wolf", "wolves", "ogre", "bandit", "bandits", "skeleton", "archer", "archers", "hero", "heroes"];
+  const noCreatures = (p: string) => creatures.every((c) => !new RegExp(`\\b${c}\\b`, "i").test(p));
+
+  it("writes an English prompt from a Turkish narrative without the LLM: terrain words, style words, no creatures", async () => {
+    const { templatePrompt } = await import("../src/prompts.js");
+    for (const [name, narrative, terrain] of spike)
+      for (const mode of ["map", "atmosphere"] as const) {
+        const w = templatePrompt(narrative, mode);
+        const st = mode === "map" ? ["top-down fantasy battle map", "tabletop RPG map"] : ["fantasy landscape illustration"];
+        for (const s of st) assert.ok(w.prompt.includes(s), `${name} ${mode}: ${w.prompt}`);
+        assert.ok(w.prompt.includes(terrain), `${name}: ${w.prompt}`);
+        assert.ok(noCreatures(w.prompt), `${name}: ${w.prompt}`);
+        assert.ok(w.prompt.split(/\s+/).length <= 60);
+      }
+  });
+
+  it("uses the LLM's answer, cleaned (style words, no creatures), and falls back to the template when it is slow or broken", async () => {
+    const { LlmPromptWriter } = await import("../src/prompts.js");
+    const http = await import("node:http");
+    let answer = "";
+    let delay = 0;
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (d) => (body += d));
+      req.on("end", () => {
+        const sent = JSON.parse(body);
+        assert.equal(req.headers["x-api-key"], "test-key");
+        assert.match(sent.system, /Never mention creatures/);
+        setTimeout(() => {
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ content: [{ type: "text", text: answer }] }));
+        }, delay);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1/messages`;
+    const writer = new LlmPromptWriter("test-key", "claude-haiku-5-5", 300, url);
+    try {
+      answer = '{"prompt": "a wooden bridge over a misty river, a wolf pack on the far bank, evening light", "negative": "blurry"}';
+      const w = await writer.write(spike[0]![1], "map");
+      assert.equal(w.source, "llm");
+      assert.ok(w.prompt.startsWith("top-down fantasy battle map, a wooden bridge"), w.prompt);
+      assert.ok(w.prompt.endsWith("tabletop RPG map, detailed painted texture"), w.prompt);
+      assert.ok(noCreatures(w.prompt) && !w.prompt.includes("pack on"), w.prompt);
+      answer = "sorry, I cannot";
+      const broken = await writer.write(spike[0]![1], "map");
+      assert.equal(broken.source, "template");
+      assert.ok(broken.prompt.includes("bridge"));
+      delay = 1000;
+      answer = '{"prompt": "late"}';
+      const slow = await writer.write(spike[0]![1], "map");
+      assert.equal(slow.source, "template");
+      assert.equal(slow.fallbackReason, "llm timeout");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("records how the prompt came about on the job, and refuses filtered texts before anything is reserved", async () => {
+    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"]])
+      await h.s.db.query(
+        "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
+        [kind, slug],
+      );
+    const a = await signUp(h.app);
+    const sketch = { inline: PNG_1x1.toString("base64"), contentType: "image/png" };
+    const submit = (params: object) => inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload: { params, inputs: { sketch } } });
+    const r = await submit({ mode: "map", narrative: spike[0]![1] });
+    assert.equal(r.statusCode, 201, r.body);
+    const job = json(r).job;
+    const draw = job.workflow.steps.find((st: { op: string }) => st.op === "txt2img");
+    assert.ok(draw.prompt.includes("bridge") && noCreatures(draw.prompt), draw.prompt);
+    const info = (await h.s.db.query("SELECT prompt_info FROM jobs WHERE id = $1", [job.id])).rows[0].prompt_info;
+    assert.equal(info.narrative, spike[0]![1]);
+    assert.equal(info.source, "template");
+    assert.equal(info.instructions, "sketch_to_scene/1");
+    assert.equal(info.prompt, draw.prompt);
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE id = $1", [job.id]);
+    const before = Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1", [a.id])).rows[0].n);
+    for (const params of [{ mode: "map", narrative: "Çıplak bir savaşçı nehirde yıkanıyor" }, { mode: "map", prompt: "nude figure on a bridge" }]) {
+      const bad = await submit(params);
+      assert.equal(bad.statusCode, 400);
+      assert.equal(json(bad).error.code, "content.text_refused");
+    }
+    const both = await submit({ mode: "map", prompt: "a bridge", narrative: "köprü" });
+    assert.equal(json(both).error.params.field, "narrative");
+    const neither = await submit({ mode: "map" });
+    assert.equal(json(neither).error.params.field, "prompt");
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1", [a.id])).rows[0].n), before);
+  });
+});

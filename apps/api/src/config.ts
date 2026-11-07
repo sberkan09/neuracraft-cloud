@@ -14,6 +14,9 @@ export interface Config {
   secureCookies: boolean;
   migrationsDir: string;
   signupCredits: number; // millicredits granted to a new account
+  anthropicApiKey: string; // the prompt step's LLM (issue #17); "" = the template only
+  promptModel: string;
+  promptTimeoutMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -34,5 +37,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     secureCookies: env.SECURE_COOKIES === "1",
     migrationsDir: path.resolve(env.MIGRATIONS_DIR ?? new URL("../../../../db/migrations", import.meta.url).pathname),
     signupCredits: Number(env.SIGNUP_CREDITS ?? 50_000),
+    anthropicApiKey: env.ANTHROPIC_API_KEY ?? "",
+    promptModel: env.PROMPT_MODEL ?? "claude-haiku-5-5",
+    promptTimeoutMs: Number(env.PROMPT_TIMEOUT_MS ?? 3000),
   };
 }
