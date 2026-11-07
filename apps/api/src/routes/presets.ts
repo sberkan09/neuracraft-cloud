@@ -17,7 +17,7 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
   app.get("/v1/presets", async () => ({ presets: presets.map(presetJson) }));
 
   app.post<{ Params: { id: string }; Body: { params?: unknown; inputs?: unknown; version?: unknown } }>("/v1/presets/:id/jobs", async (req, reply) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "jobs:submit");
     const preset = findPreset(req.params.id) ?? fail(404, "preset.unknown");
     const body = req.body ?? {};
     const params = checkParams(preset, body.params, body.version);

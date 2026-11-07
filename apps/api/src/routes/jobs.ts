@@ -84,7 +84,7 @@ export async function queueJob(
 
 export async function jobRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Body: { workflow?: unknown } }>("/v1/jobs", async (req, reply) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "jobs:submit");
     const plan = planFor(u.plan);
     const checked = await checkSubmittedWorkflow(s.db, u.id, req.body?.workflow, plan.limits);
     const row = await tx(s.db, (c) => queueJob(s, c, u, checked, { limits: plan.limits }));
@@ -92,7 +92,7 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<{ Querystring: { limit?: string } }>("/v1/jobs", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "jobs:read");
     const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 30) || 30));
     const r = await s.db.query<JobRow>("SELECT * FROM jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2", [u.id, limit]);
     return { jobs: await Promise.all(r.rows.map((x) => jobJson(s, x))) };
@@ -105,13 +105,13 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
   };
 
   app.get<{ Params: { id: string } }>("/v1/jobs/:id", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "jobs:read");
     return { job: await jobJson(s, await own(u.id, req.params.id)) };
   });
 
   // Queued: cancelled at once. Running: the worker is told on its next heartbeat and stops.
   app.post<{ Params: { id: string } }>("/v1/jobs/:id/cancel", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "jobs:submit");
     await own(u.id, req.params.id);
     const state = await tx(s.db, async (c) => {
       const r = await c.query<{ state: string }>("SELECT state FROM jobs WHERE id = $1 FOR UPDATE", [req.params.id]);
@@ -133,7 +133,7 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
 
   // Live progress as server-sent events: the current job first, then each change until it finishes.
   app.get<{ Params: { id: string } }>("/v1/jobs/:id/events", async (req, reply) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "jobs:read");
     const row = await own(u.id, req.params.id);
     reply.hijack();
     const res = reply.raw;

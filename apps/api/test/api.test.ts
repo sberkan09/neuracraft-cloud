@@ -427,3 +427,54 @@ describe("presets", () => {
     assert.equal(credits, 50000);
   });
 });
+
+describe("tokens", () => {
+  it("lets a bearer token upload, submit and read within its scopes, and stops it when revoked or expired", async () => {
+    const a = await signUp(h.app);
+    const make = async (scopes: string[]) => {
+      const r = await inject({ method: "POST", url: "/v1/tokens", headers: { cookie: a.cookie }, payload: { name: "script", scopes } });
+      assert.equal(r.statusCode, 201, r.body);
+      assert.match(json(r).secret, /^nc_pat_[A-Za-z0-9_-]{32}$/);
+      return { id: json(r).token.id as string, auth: { authorization: `Bearer ${json(r).secret}` } };
+    };
+    const full = await make(["jobs:submit", "jobs:read", "assets:write", "assets:read"]);
+    // Upload a picture and run a job with the token alone.
+    const start = await inject({ method: "POST", url: "/v1/assets", headers: full.auth, payload: { name: "in.png", kind: "input", bytes: PNG_1x1.length, contentType: "image/png" } });
+    assert.equal(start.statusCode, 201);
+    await inject({ method: "PUT", url: local(json(start).uploadUrl), payload: PNG_1x1, headers: { "content-type": "application/octet-stream" } });
+    assert.equal((await inject({ method: "POST", url: `/v1/assets/${json(start).asset.id}/complete`, headers: full.auth })).statusCode, 200);
+    const job = await inject({ method: "POST", url: "/v1/jobs", headers: full.auth, payload: { workflow: { steps: [{ op: "load", path: `asset:${json(start).asset.id}`, out: "p" }, { op: "resize", in: "p", width: 4, height: 4 }] } } });
+    assert.equal(job.statusCode, 201, job.body);
+    assert.equal((await inject({ method: "GET", url: `/v1/jobs/${json(job).job.id}`, headers: full.auth })).statusCode, 200);
+    assert.equal((await inject({ method: "GET", url: "/v1/me", headers: full.auth })).statusCode, 200);
+    // Never the account or the tokens themselves.
+    assert.equal(json(await inject({ method: "PATCH", url: "/v1/me", headers: full.auth, payload: { locale: "tr" } })).error.code, "forbidden");
+    assert.equal((await inject({ method: "POST", url: "/v1/tokens", headers: full.auth, payload: { name: "x", scopes: ["jobs:read"] } })).statusCode, 403);
+    assert.equal((await inject({ method: "GET", url: "/v1/tokens", headers: full.auth })).statusCode, 403);
+    // A read-only token: no uploads, nothing written.
+    const reader = await make(["jobs:read"]);
+    const before = Number((await h.s.db.query("SELECT count(*) AS n FROM assets WHERE owner_id = $1", [a.id])).rows[0].n);
+    const denied = await inject({ method: "POST", url: "/v1/assets", headers: reader.auth, payload: { name: "x.png", kind: "input", bytes: 10 } });
+    assert.equal(denied.statusCode, 403);
+    assert.deepEqual(json(denied).error, { code: "auth.scope_missing", params: { scope: "assets:write" } });
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM assets WHERE owner_id = $1", [a.id])).rows[0].n), before);
+    // Listed without secrets; revoked at once; expired ones stop too.
+    const list = json(await inject({ method: "GET", url: "/v1/tokens", headers: { cookie: a.cookie } })).tokens;
+    assert.equal(list.length, 2);
+    assert.ok(!JSON.stringify(list).includes("nc_pat_") || list.every((t: { prefix: string }) => t.prefix.length === 12));
+    assert.ok(list.every((t: object) => !("secret" in t) && !("secret_hash" in t) && !("secretHash" in t)));
+    assert.ok(list.find((t: { id: string }) => t.id === full.id).lastUsedAt);
+    assert.equal((await inject({ method: "DELETE", url: `/v1/tokens/${full.id}`, headers: { cookie: a.cookie } })).statusCode, 200);
+    assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: full.auth })).error.code, "auth.token_revoked");
+    await h.s.db.query("UPDATE api_tokens SET expires_at = now() - interval '1 second' WHERE id = $1", [reader.id]);
+    assert.equal(json(await inject({ method: "GET", url: "/v1/jobs", headers: reader.auth })).error.code, "auth.token_expired");
+    // Unknown or malformed tokens are just not signed in; other people cannot revoke mine.
+    assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: { authorization: "Bearer nc_pat_" + "A".repeat(32) } })).error.code, "auth.required");
+    assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: { authorization: "Bearer nonsense" } })).error.code, "auth.required");
+    const b = await signUp(h.app);
+    assert.equal((await inject({ method: "DELETE", url: `/v1/tokens/${reader.id}`, headers: { cookie: b.cookie } })).statusCode, 404);
+    // Bad requests.
+    assert.equal((await inject({ method: "POST", url: "/v1/tokens", headers: { cookie: a.cookie }, payload: { name: "x", scopes: ["billing:write"] } })).statusCode, 400);
+    assert.equal((await inject({ method: "POST", url: "/v1/tokens", headers: { cookie: a.cookie }, payload: { scopes: ["jobs:read"] } })).statusCode, 400);
+  });
+});

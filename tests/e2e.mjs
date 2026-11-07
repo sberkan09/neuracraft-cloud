@@ -207,6 +207,47 @@ try {
   }
   cookie = owner;
 
+  // 7. a native client with a bearer token only (no cookie): upload, submit, live events, download.
+  {
+    const made = await call("POST", "/v1/tokens", { name: "e2e", scopes: ["jobs:submit", "jobs:read", "assets:write", "assets:read"] });
+    assert.equal(made.status, 201);
+    const auth = { authorization: `Bearer ${made.body.secret}` };
+    const bearer = async (method, url, body) => {
+      const r = await fetch(api + url, { method, headers: body === undefined ? auth : { ...auth, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual" });
+      const text = await r.text();
+      return { status: r.status, body: text && r.headers.get("content-type")?.includes("json") ? JSON.parse(text) : text, headers: r.headers };
+    };
+    const up = await bearer("POST", "/v1/assets", { name: "red.png", kind: "input", bytes: pic.length, contentType: "image/png" });
+    assert.equal(up.status, 201);
+    assert.equal((await fetch(api + up.body.uploadUrl, { method: "PUT", body: pic, headers: { "content-type": "image/png" } })).status, 200);
+    assert.equal((await bearer("POST", `/v1/assets/${up.body.asset.id}/complete`)).status, 200);
+    const j = await bearer("POST", "/v1/jobs", { workflow: { steps: [{ op: "load", path: `asset:${up.body.asset.id}`, out: "p" }, { op: "resize", in: "p", width: 8, height: 6, out: "o" }, { op: "save", in: "o", path: "o.png" }] } });
+    assert.equal(j.status, 201, JSON.stringify(j.body));
+    const events = await fetch(api + `/v1/jobs/${j.body.job.id}/events`, { headers: auth });
+    assert.equal(events.status, 200);
+    const seen = (async () => {
+      const reader = events.body.getReader();
+      let text = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += Buffer.from(value).toString();
+        if (text.includes("succeeded")) {
+          await reader.cancel();
+          break;
+        }
+      }
+      return text;
+    })();
+    assert.equal(await runWorker(), 0);
+    assert.ok((await seen).includes("succeeded"));
+    const done7 = (await bearer("GET", `/v1/jobs/${j.body.job.id}`)).body.job;
+    const link = await bearer("GET", `/v1/assets/${done7.outputs[0].assetId}/content`);
+    assert.equal(link.status, 302);
+    const o = Buffer.from(await (await fetch(api + link.headers.get("location"))).arrayBuffer());
+    assert.deepEqual([o.readUInt32BE(16), o.readUInt32BE(20)], [8, 6]);
+  }
+
   const me = (await call("GET", "/v1/me")).body;
   assert.ok(me.credits < 50000 && me.credits > 49000, String(me.credits));
   console.log("e2e: ok (credits left", me.credits, ")");
