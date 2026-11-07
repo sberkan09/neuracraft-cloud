@@ -9,6 +9,7 @@ import { authRoutes } from "./routes/auth.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { presetRoutes } from "./routes/presets.js";
 import { reportRoutes } from "./routes/reports.js";
+import { partnerRoutes } from "./routes/partner.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { storageRoutes } from "./routes/storage.js";
 import { workerRoutes } from "./routes/worker.js";
@@ -73,6 +74,7 @@ export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Pr
   await jobRoutes(app, s);
   await presetRoutes(app, s);
   await reportRoutes(app, s);
+  await partnerRoutes(app, s);
   await tokenRoutes(app, s);
   await workerRoutes(app, s);
   await storageRoutes(app, s);

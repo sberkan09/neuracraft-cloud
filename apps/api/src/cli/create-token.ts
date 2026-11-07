@@ -3,7 +3,7 @@
 //   node dist/src/cli/create-token.js --email partner@example.com --kind app --name "GM Cebi" [--scopes jobs:submit,jobs:read] [--days 365]
 import { loadConfig } from "../config.js";
 import { connect, migrate } from "../db.js";
-import { createToken, SCOPES, type Scope } from "../auth.js";
+import { APP_SCOPES, createToken, SCOPES, type AppScope } from "../auth.js";
 
 const args = process.argv.slice(2);
 const opt = (k: string) => {
@@ -11,9 +11,11 @@ const opt = (k: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const email = opt("email"), kind = opt("kind") ?? "app", name = opt("name");
-const scopes = (opt("scopes") ?? "jobs:submit,jobs:read,assets:read").split(",") as Scope[];
-if (!email || !name || (kind !== "app" && kind !== "pat") || !scopes.every((s) => SCOPES.includes(s))) {
-  console.error(`usage: create-token --email <account> --name <name> [--kind app|pat] [--scopes ${SCOPES.join(",")}] [--days N]`);
+const scopes = (opt("scopes") ?? "jobs:submit,jobs:read,assets:read").split(",") as AppScope[];
+// partner:manage is for the partner's own server only: an app token with it acts for no end user.
+const allowed: readonly string[] = kind === "app" ? APP_SCOPES : SCOPES;
+if (!email || !name || (kind !== "app" && kind !== "pat") || !scopes.every((s) => allowed.includes(s))) {
+  console.error(`usage: create-token --email <account> --name <name> [--kind app|pat] [--scopes ${APP_SCOPES.join(",")}] [--days N]`);
   process.exit(2);
 }
 const config = loadConfig();

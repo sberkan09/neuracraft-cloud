@@ -137,6 +137,20 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
   ids to its cache paths. Paths of the server's disk never appear in a workflow.
 * **Catalog models** are assets owned by the service, each with its license recorded; only models
   whose licenses allow commercial hosted use are listed.
+* **Partner apps** (issue #21; `apps/api/src/partners.ts`): an app such as GM Cebi sells to its own
+  users, who never sign up here. The partner is one account and pays for everything its app does.
+  - **End users**: the app's token sends `X-End-User: <opaque id ≤ 64>` (an install id; no email, no
+    store account) on every request, or gets `partner.end_user_required`. Jobs and assets record it,
+    and ownership is (account, end user): an end user sees and uses only their own jobs and files.
+  - **Daily quota** (option C, the first closed test): `cli/partner.js --daily-jobs N` limits each end
+    user to N jobs per calendar day (`--timezone`, default Europe/Istanbul). Past it, submissions get
+    `quota.end_user_daily` (429, with `limit` and `resetsAt`) before anything is reserved. Jobs the
+    service failed or that were cancelled do not count; held results do.
+  - **Partner endpoints**: `GET /v1/partner/end-users/:id/usage` (jobs, cost, today's quota) and
+    `DELETE /v1/partner/end-users/:id` (everything stored for them; idempotent). The app itself may
+    call them for its own end user, and the partner's server with a `partner:manage` token (an app
+    token for servers only, which needs no `X-End-User`) for any end user.
+  - **Allowance grants** paid through in-app purchases (option A) come next.
 * **User models**: the uploader declares the license and confirms they may use it; private to them;
   removed on a valid takedown notice.
 
@@ -179,7 +193,8 @@ more. `DELETE /v1/me` deletes an account with everything it owns.
     issued to a client application (`create-token` CLI).
   - **Storage**: only a SHA-256 of the secret is stored, and the secret is shown once. The prefixes
     let secret scanners find leaked tokens.
-  - **Scopes**: `jobs:submit` (presets included), `jobs:read`, `assets:write` and `assets:read`. Nothing
+  - **Scopes**: `jobs:submit` (presets included), `jobs:read`, `assets:write` and `assets:read`, plus
+    `partner:manage` for a partner's server (app tokens only). Nothing
     that changes the account, billing or tokens is a scope; those need a session.
   - **Revocation and expiry** take effect on the next request (`auth.token_revoked`,
     `auth.token_expired`); a missing scope gives `auth.scope_missing`.

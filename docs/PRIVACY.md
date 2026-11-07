@@ -34,8 +34,9 @@ storage URLs.
   - `DELETE /v1/assets/:id` removes one file.
   - `DELETE /v1/me` (password confirmation) deletes the account and everything it owns. The rows go at
     once; the stored bytes go within two hours.
-- **By a partner**: `DELETE /v1/partner/end-users/:id` deletes everything stored for one end user
-  (with partner accounts, issue #21).
+- **By a partner**: `DELETE /v1/partner/end-users/:id` deletes everything stored for one end user.
+  The partner's server can call it, or the app for its own end user, for example from a "delete my
+  data" button. Running jobs are cancelled. A second call finds nothing.
 
 ## Where
 

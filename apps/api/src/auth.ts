@@ -59,12 +59,24 @@ export async function sessionUser(db: Db, req: FastifyRequest): Promise<SessionU
 // a session.
 export const SCOPES = ["jobs:submit", "jobs:read", "assets:write", "assets:read"] as const;
 export type Scope = (typeof SCOPES)[number];
+// Partner apps (issue #21): an app token for the partner's own server, never shipped in an app. It
+// manages end users (allowance grants, data deletion, usage) and needs no X-End-User header.
+export const PARTNER_SCOPE = "partner:manage";
+export const APP_SCOPES = [...SCOPES, PARTNER_SCOPE] as const;
+export type AppScope = (typeof APP_SCOPES)[number];
 // "session": only a signed-in person (cookie), never a token; "any": a session or any valid token.
-export type Access = Scope | "session" | "any";
+export type Access = AppScope | "session" | "any";
 
 export interface AuthedUser extends SessionUser {
   tokenId?: string; // set when the request carried a bearer token
+  tokenKind?: "pat" | "app";
+  scopes?: string[];
+  // The partner app's end user the request acts for (X-End-User, required on app tokens without
+  // partner:manage); null for people and personal tokens. Ownership is (account, end user).
+  endUser: string | null;
 }
+
+export const END_USER = /^[A-Za-z0-9._:@-]{1,64}$/;
 
 const TOKEN = /^nc_(pat|app)_[A-Za-z0-9_-]{32}$/;
 
@@ -73,7 +85,7 @@ export async function createToken(
   userId: string,
   kind: "pat" | "app",
   name: string,
-  scopes: Scope[],
+  scopes: AppScope[],
   expiresAt: Date | null,
 ): Promise<{ id: string; secret: string; prefix: string }> {
   const secret = `nc_${kind}_${randomBytes(24).toString("base64url")}`;
@@ -103,10 +115,10 @@ function takeToken(id: string): boolean {
   return true;
 }
 
-async function tokenUser(db: Db, secret: string, access: Access): Promise<AuthedUser> {
+async function tokenUser(db: Db, req: FastifyRequest, secret: string, access: Access): Promise<AuthedUser> {
   if (!TOKEN.test(secret)) fail(401, "auth.required");
-  const r = await db.query<SessionUser & { token_id: string; scopes: string[]; expired: boolean; revoked: boolean }>(
-    `SELECT u.id, u.email, u.locale, u.plan, t.id AS token_id, t.scopes,
+  const r = await db.query<SessionUser & { token_id: string; kind: "pat" | "app"; scopes: string[]; expired: boolean; revoked: boolean }>(
+    `SELECT u.id, u.email, u.locale, u.plan, t.id AS token_id, t.kind, t.scopes,
             (t.expires_at IS NOT NULL AND t.expires_at <= now()) AS expired, t.revoked_at IS NOT NULL AS revoked
        FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.secret_hash = $1`,
     [hashToken(secret)],
@@ -116,9 +128,18 @@ async function tokenUser(db: Db, secret: string, access: Access): Promise<Authed
   if (t.expired) fail(401, "auth.token_expired");
   if (access === "session") fail(403, "forbidden");
   if (access !== "any" && !t.scopes.includes(access)) fail(403, "auth.scope_missing", { scope: access });
+  // App tokens act for one end user at a time; the partner's server token (partner:manage) names
+  // end users in the path instead.
+  const header = req.headers["x-end-user"];
+  let endUser: string | null = null;
+  if (t.kind === "app" && !t.scopes.includes(PARTNER_SCOPE)) {
+    if (typeof header !== "string" || !header) fail(400, "partner.end_user_required");
+    if (!END_USER.test(header as string)) fail(400, "partner.end_user_required", { reason: "1-64 of A-Z a-z 0-9 . _ : @ -" });
+    endUser = header as string;
+  }
   if (!takeToken(t.token_id)) fail(429, "rate_limited");
   await db.query("UPDATE api_tokens SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')", [t.token_id]);
-  return { id: t.id, email: t.email, locale: t.locale, plan: t.plan, tokenId: t.token_id };
+  return { id: t.id, email: t.email, locale: t.locale, plan: t.plan, tokenId: t.token_id, tokenKind: t.kind, scopes: t.scopes, endUser };
 }
 
 // The signed-in person (session cookie) or, with an `Authorization: Bearer nc_...` header, the token's
@@ -126,6 +147,7 @@ async function tokenUser(db: Db, secret: string, access: Access): Promise<Authed
 // need no CSRF protection.
 export async function requireUser(db: Db, req: FastifyRequest, access: Access = "any"): Promise<AuthedUser> {
   const header = req.headers.authorization;
-  if (typeof header === "string" && header.startsWith("Bearer ")) return tokenUser(db, header.slice(7).trim(), access);
-  return (await sessionUser(db, req)) ?? fail(401, "auth.required");
+  if (typeof header === "string" && header.startsWith("Bearer ")) return tokenUser(db, req, header.slice(7).trim(), access);
+  const u = (await sessionUser(db, req)) ?? fail(401, "auth.required");
+  return { ...u, endUser: null };
 }
