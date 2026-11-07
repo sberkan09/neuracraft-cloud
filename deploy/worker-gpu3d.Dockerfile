@@ -18,7 +18,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository -y ppa:deadsnakes/ppa && apt-get update \
     && apt-get install -y --no-install-recommends git g++ python3 python3-venv python3-dev python3.11 python3.11-venv python3.11-dev \
-        libgl1 libegl1 libglib2.0-0 libxrender1 libxxf86vm1 libxfixes3 libxi6 libxkbcommon0 libsm6 libcurl4 ca-certificates \
+        libgl1 libegl1 libglib2.0-0 libxrender1 libxxf86vm1 libxfixes3 libxi6 libxkbcommon0 libsm6 libusb-1.0-0 libgomp1 \
+        libcurl4 ca-certificates \
     && rm -rf /var/lib/apt/lists/* && useradd --create-home --uid 10001 worker && mkdir -p /data && chown worker /data
 # The 3D service of the engine commit the worker is built with (worker/CMakeLists.txt).
 COPY worker/CMakeLists.txt /tmp/worker-cmake.txt
