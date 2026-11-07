@@ -28,6 +28,7 @@ export const ErrorCodes = [
   "job.not_cancellable",
   "job.failed",
   "job.no_3d_worker",
+  "job.no_gpu_worker",
   "preset.unknown",
   "preset.params_invalid",
   "preset.unavailable",

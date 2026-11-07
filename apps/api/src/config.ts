@@ -20,6 +20,7 @@ export interface Config {
   moderationThresholds: string; // labels of the output classifier that hold a result: "nsfw=0.5"
   interactiveRegions: string[]; // interactive presets run only on workers in these regions; [] = anywhere
   retentionEvery: number; // seconds between cleanups (retention.ts); 0 = never
+  interactiveGraceSeconds: number; // interactive jobs are refused when no GPU worker was seen for this long
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -46,5 +47,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     moderationThresholds: env.MODERATION_THRESHOLDS ?? "nsfw=0.5",
     interactiveRegions: (env.INTERACTIVE_REGIONS ?? "").split(",").map((r) => r.trim()).filter(Boolean),
     retentionEvery: Number(env.RETENTION_EVERY_SECONDS ?? 600),
+    interactiveGraceSeconds: Number(env.INTERACTIVE_GRACE_SECONDS ?? 60),
   };
 }

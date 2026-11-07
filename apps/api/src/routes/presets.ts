@@ -89,7 +89,13 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
       }
       const checked = await checkSubmittedWorkflow(c, u.id, moderatedWorkflow(preset, params, refs, models), limits, u.endUser);
       const regions = preset.latency === "interactive" ? s.config.interactiveRegions : [];
-      return queueJob(s, c, u, checked, { limits, preset: { id: preset.id, version: preset.version }, promptInfo, regions });
+      return queueJob(s, c, u, checked, {
+        limits,
+        preset: { id: preset.id, version: preset.version, variant: preset.variant?.(params) ?? null },
+        promptInfo,
+        regions,
+        latency: preset.latency,
+      });
     });
     return reply.status(201).send({ job: await jobJson(s, row) });
   });

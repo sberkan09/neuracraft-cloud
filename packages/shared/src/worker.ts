@@ -12,6 +12,8 @@ export interface WorkerCapabilities {
   features?: string[];
   // Where it runs (WORKER_REGION, e.g. "eu"): jobs kept to regions go only to workers in one of them.
   region?: string;
+  // Kept for interactive jobs only (INTERACTIVE_ONLY=1): a long batch job never occupies it.
+  interactiveOnly?: boolean;
 }
 
 export interface WorkerRegisterResponse {
@@ -64,10 +66,19 @@ export interface UploadResponse {
   uploads: { name: string; key: string; url: string }[];
 }
 
+// Where a job's time went on the worker (issue #20), in seconds.
+export interface WorkerTimings {
+  fetchSeconds?: number;
+  loadSeconds?: number;
+  runSeconds?: number;
+  uploadSeconds?: number;
+}
+
 export interface CompleteRequest {
   workerId: string;
   outputs: { name: string; key: string; bytes: number; sha256: string; contentType: string }[];
   workerSeconds: number;
+  timings?: WorkerTimings;
 }
 
 export interface FailRequest {
@@ -75,4 +86,5 @@ export interface FailRequest {
   code: string;
   detail?: string;
   workerSeconds: number;
+  timings?: WorkerTimings;
 }

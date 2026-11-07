@@ -80,6 +80,7 @@
     "job.not_cancellable": "This job has already finished.",
     "job.failed": "The job failed.",
     "job.no_3d_worker": "No GPU worker with the services this job needs ({{services}}) is online right now. Try again later.",
+    "job.no_gpu_worker": "No image server is running right now. Try again in a minute.",
     "worker.unauthorized": "Worker not authorised.",
     "worker.lease_lost": "The worker lost this job.",
     "model.unsupported": "This model is not supported.",

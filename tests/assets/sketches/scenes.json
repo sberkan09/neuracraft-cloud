@@ -1,0 +1,26 @@
+{
+ "kopru": {
+  "narrative": "Kurt sürüsü nehrin karşı yakasında, ahşap köprünün başında pusu kurmuş. Akşam, sisli bir orman.",
+  "prompt": "top-down fantasy battle map, a wooden plank bridge over a misty forest river, pine trees on both banks, evening light, tabletop RPG map, detailed painted texture"
+ },
+ "han": {
+  "narrative": "Kalabalık bir handa kavga çıkıyor. Tezgâhın önünde üç haydut, masalar devrilmiş, merdiven yukarı çıkıyor.",
+  "prompt": "top-down fantasy battle map, interior of a medieval tavern, wooden floor, round tables, long bar counter, staircase in the corner, warm candle light, tabletop RPG map, detailed painted texture"
+ },
+ "zindan": {
+  "narrative": "Dar bir zindan koridoru köşeyi dönüyor. Ortada bir çukur tuzak, köşenin ardında bir iskelet bekliyor.",
+  "prompt": "top-down fantasy battle map, narrow stone dungeon corridor turning a corner, a pit trap in the floor, wooden door in the wall, torch light, tabletop RPG map, detailed painted texture"
+ },
+ "orman-yolu": {
+  "narrative": "Orman yolunda bir at arabası. Ağaçların arasından haydutlar oklarla saldırıyor.",
+  "prompt": "top-down fantasy battle map, a dirt road through a dense forest, a wooden wagon on the road, rocks, daylight, tabletop RPG map, detailed painted texture"
+ },
+ "magara": {
+  "narrative": "Kayalık bir yamaçta mağara girişi. Önünde büyük kayalar, aşağıda bir dere. Mağaradan bir ogre çıkıyor.",
+  "prompt": "top-down fantasy battle map, a cave entrance in a rocky cliff, large boulders, a small stream at the bottom, overcast, tabletop RPG map, detailed painted texture"
+ },
+ "sur": {
+  "narrative": "Kale surları ve kapı. İki kulede okçular, kahramanlar yoldan kapıya yaklaşıyor.",
+  "prompt": "top-down fantasy battle map, a stone castle wall with two round towers and a wooden gate with a portcullis, a dirt path leading to the gate, grass outside, tabletop RPG map, detailed painted texture"
+ }
+}

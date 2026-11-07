@@ -51,6 +51,8 @@ export async function jobJson(s: Services, row: JobRow): Promise<Job> {
 }
 
 const SERVICE_GRACE_SECONDS = 600;
+const GPU_WORKER =
+  "SELECT 1 FROM workers WHERE class = 'gpu' AND (cardinality($1::text[]) = 0 OR capabilities ->> 'region' = ANY($1::text[])) AND last_seen_at > now() - make_interval(secs => $2) LIMIT 1";
 const SERVICE_WORKER =
   "SELECT 1 FROM workers WHERE class = 'gpu' AND capabilities -> 'features' ?& $1::text[] AND last_seen_at > now() - make_interval(secs => $2) LIMIT 1";
 
@@ -62,22 +64,32 @@ export async function queueJob(
   c: pg.PoolClient,
   u: { id: string; plan: string; endUser: string | null },
   checked: CheckedWorkflow,
-  opts: { limits: JobLimits; preset?: { id: string; version: number }; promptInfo?: Record<string, unknown> | null; regions?: string[] },
+  opts: {
+    limits: JobLimits;
+    preset?: { id: string; version: number; variant?: string | null };
+    promptInfo?: Record<string, unknown> | null;
+    regions?: string[];
+    latency?: "interactive" | "batch";
+  },
 ): Promise<JobRow> {
   const plan = planFor(u.plan);
   const reserve = cost(checked.workerClass, opts.limits.maxSeconds);
   if (checked.features.length && !(await c.query(SERVICE_WORKER, [checked.features, SERVICE_GRACE_SECONDS])).rowCount)
     fail(503, "job.no_3d_worker", { services: checked.features.join(", ") });
+  // Interactive jobs never wait minutes for a GPU: without one seen lately (in their regions), they are
+  // refused at once so the app can say "try again in a minute".
+  if (opts.latency === "interactive" && !(await c.query(GPU_WORKER, [opts.regions ?? [], s.config.interactiveGraceSeconds])).rowCount)
+    fail(503, "job.no_gpu_worker");
   await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
   const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);
   if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
   if (u.endUser) await checkEndUserQuota(c, u.id, u.endUser);  // before anything is reserved
   if ((await balance(c, u.id)) < reserve) fail(402, "credits.insufficient", { needed: reserve });
   const r = await c.query<JobRow>(
-    `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version, prompt_info, regions, end_user)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+    `INSERT INTO jobs (user_id, worker_class, features, priority, workflow, limits, models, files, preset, preset_version, prompt_info, regions, end_user, latency, preset_variant)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
     [u.id, checked.workerClass, checked.features, plan.priority, JSON.stringify(checked.workflow), JSON.stringify(opts.limits), checked.models, checked.files,
-     opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null, opts.regions ?? [], u.endUser],
+     opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null, opts.regions ?? [], u.endUser, opts.latency ?? "batch", opts.preset?.variant ?? null],
   );
   await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
   await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });

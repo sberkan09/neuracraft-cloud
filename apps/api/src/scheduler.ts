@@ -16,7 +16,9 @@ export const MAX_ATTEMPTS = 3;
 // workers reporting all of them in `features`, and those workers take them first. A CPU worker takes
 // GPU jobs (never service jobs) only while no GPU worker has been seen for GPU_GRACE_SECONDS (so they
 // still run, slowly, without a GPU in the pool). Jobs kept to regions (jobs.regions) go only to workers
-// reporting one of them (WORKER_REGION).
+// reporting one of them (WORKER_REGION). Interactive jobs (presets used at the table) go before batch
+// jobs of the same priority and never to CPU workers: they wait for a GPU (and are refused at
+// submission when there is none, jobs.ts).
 export const GPU_GRACE_SECONDS = 60;
 export async function claim(
   db: Db,
@@ -26,6 +28,7 @@ export async function claim(
   loaded: string[],
   features: string[] = [],
   region = "",
+  interactiveOnly = false, // a worker kept for interactive jobs (INTERACTIVE_ONLY=1): warm, never busy with long ones
 ): Promise<ClaimedJob | null> {
   const concurrency = Object.fromEntries(Object.entries(plans).map(([k, p]) => [k, p.concurrentJobs]));
   let classes = workerClass === "gpu" ? ["gpu", "cpu"] : ["cpu"];
@@ -36,24 +39,27 @@ export async function claim(
   }
   const job = await tx(db, async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(727002)");
-    const r = await c.query<{ id: string; workflow: unknown; limits: JobLimits; files: string[] }>(
+    const r = await c.query<{ id: string; workflow: unknown; limits: JobLimits; files: string[]; warm: boolean }>(
       `WITH busy AS (SELECT user_id, count(*) AS n FROM jobs WHERE state IN ('leased', 'running') GROUP BY user_id)
-       SELECT j.id, j.workflow, j.limits, j.files FROM jobs j
+       SELECT j.id, j.workflow, j.limits, j.files, (j.models <@ $1::uuid[]) AS warm FROM jobs j
          JOIN users u ON u.id = j.user_id
          LEFT JOIN busy b ON b.user_id = j.user_id
         WHERE j.state = 'queued' AND j.worker_class = ANY($3::text[]) AND j.features <@ $4::text[] AND NOT j.cancel
           AND (cardinality(j.regions) = 0 OR $5::text = ANY(j.regions))
+          AND (j.latency <> 'interactive' OR $6::text = 'gpu')
+          AND (NOT $7::boolean OR j.latency = 'interactive')
           AND coalesce(b.n, 0) < coalesce(($2::jsonb ->> u.plan)::int, 1)
-        ORDER BY cardinality(j.features) DESC, array_position($3::text[], j.worker_class), j.priority DESC, coalesce(b.n, 0), (j.models <@ $1::uuid[]) DESC, j.created_at
+        ORDER BY cardinality(j.features) DESC, array_position($3::text[], j.worker_class), j.priority DESC, (j.latency = 'interactive') DESC, coalesce(b.n, 0), (j.models <@ $1::uuid[]) DESC, j.created_at
         LIMIT 1
           FOR UPDATE OF j SKIP LOCKED`,
-      [loaded, JSON.stringify(concurrency), classes, offered, region],
+      [loaded, JSON.stringify(concurrency), classes, offered, region, workerClass, interactiveOnly],
     );
     const row = r.rows[0];
     if (!row) return null;
     await c.query(
-      "UPDATE jobs SET state = 'leased', worker_id = $2, lease_until = now() + make_interval(secs => $3), attempts = attempts + 1 WHERE id = $1",
-      [row.id, workerId, LEASE_SECONDS],
+      `UPDATE jobs SET state = 'leased', worker_id = $2, lease_until = now() + make_interval(secs => $3), attempts = attempts + 1,
+              claimed_at = coalesce(claimed_at, now()), timings = jsonb_build_object('warm', $4::boolean) WHERE id = $1`,
+      [row.id, workerId, LEASE_SECONDS, row.warm],
     );
     await publish(c, row.id, { type: "state", state: "leased" });
     return row;
