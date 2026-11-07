@@ -176,6 +176,34 @@ try {
     assert.ok(bytes.toString("latin1").includes('"animations"'), "the animation is in the model");
   }
 
+  // 5b. an image classifier from the catalog (a bundle: the .onnx and its manifest): the classify step's
+  // scores come back as a .json output. The picture is (200, 40, 10); this tiny "classifier" scores
+  // the mean of each channel.
+  {
+    let classifierId = "";
+    const add = spawn("node", [path.join(root, "apps/api/dist/src/cli/add-model.js"), path.join(root, "tests/assets/classifier"), "--kind", "onnx", "--license", "own", "--name", "channel means", "--entry", "means.onnx"], {
+      env: { ...process.env, STORAGE_DIR: path.join(data, "storage") },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    add.stdout.on("data", (d) => (classifierId += d));
+    await new Promise((r) => add.on("exit", r));
+    const j = await call("POST", "/v1/jobs", { workflow: { steps: [
+      { op: "load", path: `asset:${id}`, out: "p" },
+      { op: "classify", model: `asset:${classifierId.trim()}`, in: "p", path: "scores.json" },
+      { op: "save", in: "p", path: "p.png" },
+    ] } });
+    assert.equal(j.status, 201, JSON.stringify(j.body));
+    assert.equal((await call("POST", "/v1/jobs", { workflow: { steps: [{ op: "load", path: `asset:${id}`, out: "p" }, { op: "classify", model: `asset:${classifierId.trim()}`, in: "p", path: "../x.json" }] } })).status, 400);
+    assert.equal(await runWorker(), 0);
+    const done = (await call("GET", `/v1/jobs/${j.body.job.id}`)).body.job;
+    assert.equal(done.state, "succeeded", JSON.stringify(done));
+    const file = done.outputs.find((o) => o.name === "scores.json");
+    assert.equal(file.kind, "file");
+    const scores = await (await fetch(api + (await call("GET", `/v1/assets/${file.assetId}/content`)).headers.get("location"))).json();
+    assert.deepEqual(scores.labels, ["red", "green", "blue"]);
+    assert.ok(Math.abs(scores.scores.red - 200 / 255) < 1e-3 && Math.abs(scores.scores.blue - 10 / 255) < 1e-3, JSON.stringify(scores));
+  }
+
   // 6. workers sharing one cache (docker compose replicas on one volume): six users upload the same
   // picture (one blob), six workers start on an empty cache at once and fetch it together; a tiny
   // CACHE_MAX_GB makes each trim the cache while the others are still using it.

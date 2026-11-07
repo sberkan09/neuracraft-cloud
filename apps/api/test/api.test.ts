@@ -321,7 +321,7 @@ describe("jobs", () => {
 
 describe("presets", () => {
   const catalog = async () => {
-    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"]])
+    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
       await h.s.db.query(
         "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
         [kind, slug],
@@ -351,7 +351,8 @@ describe("presets", () => {
     assert.equal(ok.statusCode, 201, ok.body);
     const job = json(ok).job;
     const steps = job.workflow.steps.map((s: { op: string }) => s.op);
-    assert.deepEqual(steps, ["load", "resize", "scribble", "txt2img", "save"]);
+    assert.deepEqual(steps, ["load", "resize", "scribble", "txt2img", "save", "classify"]);
+    assert.deepEqual([job.workflow.steps[5].in, job.workflow.steps[5].path], ["scene", "moderation.json"]);
     const draw = job.workflow.steps[3];
     assert.equal(draw.sampler, "lcm");
     assert.equal(draw.steps, 4);
@@ -378,7 +379,7 @@ describe("presets", () => {
   it("maps the parameters of older preset versions", async () => {
     const { checkParams } = await import("../src/presets.js");
     const v2 = {
-      id: "demo", version: 2, oldestVersion: 1, description: "", inputs: [], models: [], latency: "batch" as const,
+      id: "demo", version: 2, oldestVersion: 1, description: "", inputs: [], models: [], moderate: "x", latency: "batch" as const,
       params: { mode: { type: "enum" as const, options: ["map", "atmosphere"], required: true, doc: "" } },
       maxSeconds: () => 10, workflow: () => ({ steps: [] }),
       upgrade: (p: Record<string, unknown>) => ({ mode: p.style === "tactical" ? "map" : "atmosphere" }),  // v1 called it style
@@ -548,7 +549,7 @@ describe("prompt step", () => {
   });
 
   it("records how the prompt came about on the job, and refuses filtered texts before anything is reserved", async () => {
-    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"]])
+    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
       await h.s.db.query(
         "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
         [kind, slug],
@@ -578,5 +579,150 @@ describe("prompt step", () => {
     const neither = await submit({ mode: "map" });
     assert.equal(json(neither).error.params.field, "prompt");
     assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1", [a.id])).rows[0].n), before);
+  });
+});
+
+describe("moderation", () => {
+  const catalog = async () => {
+    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
+      await h.s.db.query(
+        "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
+        [kind, slug],
+      );
+  };
+  const credits = async (cookie: string) => json(await inject({ method: "GET", url: "/v1/me", headers: { cookie } })).credits as number;
+  // A preset job run through a fake GPU worker that uploads these files; returns the finished job.
+  const runPreset = async (cookie: string, files: Record<string, Buffer>) => {
+    await catalog();
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");  // only this job to claim
+    const sub = await inject({
+      method: "POST",
+      url: "/v1/presets/sketch_to_scene/jobs",
+      headers: { cookie },
+      payload: { params: { mode: "map", narrative: "Nehrin üzerinde ahşap bir köprü" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } },
+    });
+    assert.equal(sub.statusCode, 201, sub.body);
+    const jobId = json(sub).job.id;
+    const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test" } })).workerId;
+    const claimed = json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job;
+    assert.equal(claimed.jobId, jobId);
+    const names = Object.keys(files);
+    const types = (n: string) => (n.endsWith(".json") ? "application/json" : "image/png");
+    const up = json(await inject({ method: "POST", url: `/v1/worker/jobs/${jobId}/uploads`, headers: worker, payload: { workerId, outputs: names.map((name) => ({ name, bytes: files[name]!.length, contentType: types(name) })) } }));
+    for (const u of up.uploads) assert.equal((await inject({ method: "PUT", url: local(u.url), payload: files[u.name]!, headers: { "content-type": "application/octet-stream" } })).statusCode, 200);
+    const done = await inject({
+      method: "POST",
+      url: `/v1/worker/jobs/${jobId}/complete`,
+      headers: worker,
+      payload: { workerId, workerSeconds: 3, outputs: up.uploads.map((u: { name: string; key: string }) => ({ name: u.name, key: u.key, bytes: files[u.name]!.length, sha256: "", contentType: types(u.name) })) },
+    });
+    assert.equal(done.statusCode, 200, done.body);
+    return json(await inject({ method: "GET", url: `/v1/jobs/${jobId}`, headers: { cookie } })).job;
+  };
+  const scores = (nsfw: number) => Buffer.from(JSON.stringify({ model: "nsfw.onnx", labels: ["normal", "nsfw"], scores: { normal: 1 - nsfw, nsfw }, frames: [[1 - nsfw, nsfw]] }));
+  const outputAsset = async (jobId: string) => (await h.s.db.query("SELECT a.id, a.status FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 AND o.name = 'scene.png'", [jobId])).rows[0];
+
+  it("holds what a classifier stub flags: the job fails content.flagged, nothing is downloadable, the reservation comes back", async () => {
+    const a = await signUp(h.app);
+    const start = await credits(a.cookie);
+    h.s.moderator = { judge: async () => ({ checked: true, flagged: true, scores: { nsfw: 0.99 }, reason: "nsfw" }) };
+    try {
+      const job = await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.01) });
+      assert.equal(job.state, "failed");
+      assert.equal(job.error.code, "content.flagged");
+      assert.deepEqual(job.outputs, []);
+      const out = await outputAsset(job.id);
+      assert.equal(out.status, "held");
+      assert.equal((await inject({ method: "GET", url: `/v1/assets/${out.id}/content`, headers: { cookie: a.cookie } })).statusCode, 404);
+      assert.equal(await credits(a.cookie), start);
+      const rep = (await h.s.db.query("SELECT source, reason, status, snapshot FROM reports WHERE asset_id = $1", [out.id])).rows[0];
+      assert.deepEqual([rep.source, rep.reason, rep.status], ["classifier", "classifier", "open"]);
+      assert.equal(rep.snapshot.prompt.narrative, "Nehrin üzerinde ahşap bir köprü");
+      assert.equal(rep.snapshot.moderation.scores.nsfw, 0.99);
+    } finally {
+      h.s.moderator = undefined;
+    }
+  });
+
+  it("reads the engine's scores: releases a clean result, holds one over the threshold and one without scores", async () => {
+    const a = await signUp(h.app);
+    const start = await credits(a.cookie);
+    const clean = await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.02) });
+    assert.equal(clean.state, "succeeded");
+    assert.deepEqual(clean.outputs.map((o: { name: string }) => o.name), ["scene.png"]);  // the scores are not an output
+    const m = (await h.s.db.query("SELECT moderation FROM jobs WHERE id = $1", [clean.id])).rows[0].moderation;
+    assert.deepEqual([m.checked, m.flagged, m.scores.nsfw], [true, false, 0.02]);
+    assert.equal((await inject({ method: "GET", url: `/v1/assets/${clean.outputs[0].assetId}/content`, headers: { cookie: a.cookie } })).statusCode, 302);
+    assert.ok((await credits(a.cookie)) < start);
+    const charged = await credits(a.cookie);
+    const flagged = await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.8) });
+    assert.equal(flagged.error.code, "content.flagged");
+    const unchecked = await runPreset(a.cookie, { "scene.png": PNG_1x1 });
+    assert.equal(unchecked.state, "failed");
+    assert.equal(unchecked.error.code, "content.unchecked");
+    assert.equal((await outputAsset(unchecked.id)).status, "held");
+    assert.equal(await credits(a.cookie), charged);
+  });
+
+  it("takes reports from the owner once, and 404s everyone else", async () => {
+    const a = await signUp(h.app);
+    const b = await signUp(h.app);
+    const job = await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.01) });
+    const asset = job.outputs[0].assetId;
+    const report = (who: string, payload: object) => inject({ method: "POST", url: `/v1/assets/${asset}/report`, headers: { cookie: who }, payload });
+    const first = await report(a.cookie, { reason: "violence_gore", note: "kan var" });
+    assert.equal(first.statusCode, 202, first.body);
+    const again = await report(a.cookie, { reason: "violence_gore", note: "kan var" });
+    assert.equal(again.statusCode, 202);
+    assert.equal(json(again).report.id, json(first).report.id);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM reports WHERE asset_id = $1", [asset])).rows[0].n), 1);
+    assert.equal((await report(b.cookie, { reason: "other" })).statusCode, 404);
+    assert.equal((await inject({ method: "POST", url: "/v1/assets/00000000-0000-0000-0000-000000000000/report", headers: { cookie: a.cookie }, payload: { reason: "other" } })).statusCode, 404);
+    const pic = await uploadPicture(h.app, a.cookie);  // only generated pictures are reported
+    assert.equal((await inject({ method: "POST", url: `/v1/assets/${pic}/report`, headers: { cookie: a.cookie }, payload: { reason: "other" } })).statusCode, 404);
+    for (const bad of [{ reason: "ugly" }, {}, { reason: "hate", note: "x".repeat(501) }, { reason: "hate", note: 5 }]) {
+      const r = await report(a.cookie, bad);
+      assert.equal(r.statusCode, 400);
+      assert.equal(json(r).error.code, "report.invalid");
+    }
+    const row = (await h.s.db.query("SELECT r.reason, r.note, r.source, r.reporter_id, r.snapshot, a.reported_at FROM reports r JOIN assets a ON a.id = r.asset_id WHERE r.id = $1", [json(first).report.id])).rows[0];
+    assert.deepEqual([row.reason, row.note, row.source, row.reporter_id], ["violence_gore", "kan var", "user", a.id]);
+    assert.ok(row.reported_at);
+    assert.ok(row.snapshot.prompt.prompt.includes("bridge"));
+    assert.equal(row.snapshot.inputs[0].name, "sketch.png");
+    assert.equal(json(await inject({ method: "GET", url: `/v1/jobs/${job.id}`, headers: { cookie: a.cookie } })).job.outputs.length, 1);  // still visible to its owner
+  });
+
+  it("lets an operator list reports, remove the asset (logged), dismiss and flag the account", async () => {
+    const { listReports, showReport, removeReportedAsset, dismissReport, flagAccount } = await import("../src/moderation.js");
+    const a = await signUp(h.app);
+    const job = await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.01) });
+    const asset = job.outputs[0].assetId;
+    const id = json(await inject({ method: "POST", url: `/v1/assets/${asset}/report`, headers: { cookie: a.cookie }, payload: { reason: "sexual" } })).report.id;
+    const open = await listReports(h.s.db);
+    assert.ok(open.some((r) => r.id === id && r.reason === "sexual"));
+    const shown = await showReport(h.s.db, h.s.storage, id);
+    assert.ok(shown!.output && shown!.inputs[0]!.url);
+    const file = await inject({ method: "GET", url: local(shown!.output!) });
+    assert.deepEqual(file.rawPayload, PNG_1x1);
+    await flagAccount(h.s.db, id, "ayse", "tekrar ederse kapat");
+    assert.ok((await h.s.db.query("SELECT flagged_at FROM users WHERE id = $1", [a.id])).rows[0].flagged_at);
+    await removeReportedAsset(h.s.db, id, "ayse", "müstehcen");
+    assert.equal((await inject({ method: "GET", url: `/v1/assets/${asset}/content`, headers: { cookie: a.cookie } })).statusCode, 404);
+    assert.equal(json(await inject({ method: "GET", url: `/v1/jobs/${job.id}`, headers: { cookie: a.cookie } })).job.outputs.length, 0);
+    assert.ok(!(await listReports(h.s.db)).some((r) => r.id === id));
+    assert.equal((await listReports(h.s.db, { status: "all" })).find((r) => r.id === id)!.status, "removed");
+    const logged = (await h.s.db.query("SELECT operator, action, asset_id, user_id, note FROM moderation_log WHERE report_id = $1 ORDER BY id", [id])).rows;
+    assert.deepEqual(logged.map((l) => l.action), ["flag_account", "remove_asset"]);
+    assert.deepEqual([logged[1].operator, logged[1].asset_id, logged[1].user_id, logged[1].note], ["ayse", asset, a.id, "müstehcen"]);
+    // The classifier's held outputs are in the queue too; dismissing keeps them held.
+    h.s.moderator = { judge: async () => ({ checked: true, flagged: true, scores: { nsfw: 0.9 } }) };
+    const held = await runPreset(a.cookie, { "scene.png": PNG_1x1 }).finally(() => (h.s.moderator = undefined));
+    const heldAsset = await outputAsset(held.id);
+    const auto = (await listReports(h.s.db)).find((r) => r.asset_id === heldAsset.id)!;
+    assert.equal(auto.source, "classifier");
+    await dismissReport(h.s.db, auto.id, "ayse");
+    assert.equal((await outputAsset(held.id)).status, "held");
+    await assert.rejects(dismissReport(h.s.db, auto.id, "ayse"));
   });
 });

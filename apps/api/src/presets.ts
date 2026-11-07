@@ -5,6 +5,7 @@
 // A preset has a version; clients may send the version they were built for, and older parameter sets
 // are mapped to the current one (`upgrade`) for at least one version.
 import { fail } from "./errors.js";
+import { CLASSIFIER_SLUG, MODERATION_FILE } from "./moderation.js";
 
 export type ParamSpec =
   | { type: "enum"; options: string[]; required?: boolean; default?: string; doc: string }
@@ -28,7 +29,8 @@ export interface Preset {
   description: string;
   params: Record<string, ParamSpec>;
   inputs: InputSpec[];
-  models: string[]; // slugs
+  models: string[]; // slugs (the output classifier's is added for every preset)
+  moderate: string; // the clip the output classifier checks (presets.ts routes add the classify step)
   latency: "interactive" | "batch";
   maxSeconds(params: Record<string, unknown>): number; // the reservation and the time limit
   workflow(params: Record<string, unknown>, inputs: Record<string, string>, models: Models): { steps: Record<string, unknown>[] };
@@ -61,6 +63,7 @@ const sketchToScene: Preset = {
   },
   inputs: [{ name: "sketch", doc: "Terrain sketch: dark strokes on light paper, PNG", contentTypes: ["image/png"], maxBytes: 512 * 1024, maxSide: 1024 }],
   models: ["dreamshaper-8", "controlnet-scribble", "lcm-lora-sd15", "taesd"],
+  moderate: "scene",
   latency: "interactive",
   check: (p) =>
     p.prompt === undefined && p.narrative === undefined
@@ -102,6 +105,16 @@ const sketchToScene: Preset = {
 };
 
 export const presets: Preset[] = [sketchToScene];
+
+// The models a preset job needs: its own and the output classifier.
+export const presetModels = (p: Preset) => [...p.models, CLASSIFIER_SLUG];
+
+// The preset's workflow with the output classifier on its result (moderation.ts): every preset job
+// ends with scores the API reads before anything is released.
+export function moderatedWorkflow(p: Preset, params: Record<string, unknown>, inputs: Record<string, string>, models: Models) {
+  const wf = p.workflow(params, inputs, models);
+  return { steps: [...wf.steps, { op: "classify", model: asset(models[CLASSIFIER_SLUG]!), in: p.moderate, path: MODERATION_FILE }] };
+}
 export const findPreset = (id: string) => presets.find((p) => p.id === id);
 
 // The parameters, checked against the preset (unknown, missing, out of range: preset.params_invalid

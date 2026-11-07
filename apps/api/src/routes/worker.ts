@@ -3,7 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { CompleteRequest, FailRequest, HeartbeatRequest, UploadRequest, WorkerCapabilities, WorkerClaimRequest } from "@neuracraft/shared";
 import { outputKind } from "@neuracraft/shared";
-import type { Services } from "../app.js";
+import { moderatorFor, type Services } from "../app.js";
 import { tx } from "../db.js";
 import { fail } from "../errors.js";
 import { publish } from "../events.js";
@@ -11,6 +11,8 @@ import { settleJob } from "../ledger.js";
 import { cost } from "../plans.js";
 import { claim, LEASE_SECONDS } from "../scheduler.js";
 import { OUTPUT_FILE } from "../workflow.js";
+import { MODERATION_FILE, reportHeld, type Verdict } from "../moderation.js";
+import { blobKey } from "../storage.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_OUTPUT = 2 * 1024 ** 3;
@@ -26,8 +28,8 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
   };
   const lease = async (jobId: string, workerId: string) => {
     if (!UUID.test(jobId) || !UUID.test(workerId)) fail(404, "not_found");
-    const r = await s.db.query<{ user_id: string; worker_class: string; cancel: boolean; started_at: Date | null }>(
-      "SELECT user_id, worker_class, cancel, started_at FROM jobs WHERE id = $1 AND worker_id = $2 AND state IN ('leased', 'running')",
+    const r = await s.db.query<{ user_id: string; worker_class: string; cancel: boolean; started_at: Date | null; preset: string | null }>(
+      "SELECT user_id, worker_class, cancel, started_at, preset FROM jobs WHERE id = $1 AND worker_id = $2 AND state IN ('leased', 'running')",
       [jobId, workerId],
     );
     return r.rows[0] ?? fail(409, "worker.lease_lost");
@@ -103,24 +105,47 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
       stored.push({ ...o, ...(await s.storage.finalize(o.key)) });
     }
     const seconds = Math.max(0, Number(body.workerSeconds) || 0);
+    // Preset results pass the output classifier first (moderation.ts): flagged or unchecked ones are
+    // held, the job fails and nothing is charged. The scores file is the service's, not an output.
+    const verdict: Verdict | null = j.preset ? await moderatorFor(s).judge(stored, s.storage) : null;
+    const held = verdict !== null && (verdict.flagged || !verdict.checked);
+    const scores = j.preset ? stored.find((o) => o.name === MODERATION_FILE) : undefined;
+    const outputs = stored.filter((o) => o !== scores);
     await tx(s.db, async (c) => {
-      for (const o of stored) {
+      const heldIds: string[] = [];
+      for (const o of outputs) {
         await c.query("INSERT INTO blobs (sha256, bytes) VALUES ($1, $2) ON CONFLICT DO NOTHING", [o.sha256, o.bytes]);
         const a = await c.query<{ id: string }>(
-          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes) VALUES ($1, 'output', $2, $3, $4, $5) RETURNING id",
-          [j.user_id, o.name, String(o.contentType ?? "application/octet-stream").slice(0, 100), o.sha256, o.bytes],
+          "INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes, status) VALUES ($1, 'output', $2, $3, $4, $5, $6) RETURNING id",
+          [j.user_id, o.name, String(o.contentType ?? "application/octet-stream").slice(0, 100), o.sha256, o.bytes, held ? "held" : "ready"],
         );
         await c.query("INSERT INTO job_outputs (job_id, name, asset_id) VALUES ($1, $2, $3)", [req.params.id, o.name, a.rows[0]!.id]);
-        await publish(c, req.params.id, { type: "output", output: { name: o.name, assetId: a.rows[0]!.id, kind: outputKind(String(o.contentType ?? "")), bytes: o.bytes } });
+        if (held) heldIds.push(a.rows[0]!.id);
+        else await publish(c, req.params.id, { type: "output", output: { name: o.name, assetId: a.rows[0]!.id, kind: outputKind(String(o.contentType ?? "")), bytes: o.bytes } });
+      }
+      if (held) {
+        const code = verdict!.checked ? "content.flagged" : "content.unchecked";
+        await c.query(
+          `UPDATE jobs SET state = 'failed', finished_at = now(), worker_seconds = $2, lease_until = NULL, error = $3, moderation = $4,
+                  started_at = coalesce(started_at, now() - make_interval(secs => $2)) WHERE id = $1`,
+          [req.params.id, seconds, JSON.stringify({ code }), JSON.stringify(verdict)],
+        );
+        await settleJob(c, req.params.id, 0);
+        await reportHeld(c, req.params.id, j.user_id, heldIds, verdict!);
+        await publish(c, req.params.id, { type: "error", error: { code } });
+        await publish(c, req.params.id, { type: "state", state: "failed" });
+        return;
       }
       await c.query(
-        `UPDATE jobs SET state = 'succeeded', finished_at = now(), worker_seconds = $2, lease_until = NULL,
+        `UPDATE jobs SET state = 'succeeded', finished_at = now(), worker_seconds = $2, lease_until = NULL, moderation = $3,
                 started_at = coalesce(started_at, now() - make_interval(secs => $2)) WHERE id = $1`,
-        [req.params.id, seconds],
+        [req.params.id, seconds, verdict ? JSON.stringify(verdict) : null],
       );
       await settleJob(c, req.params.id, cost(j.worker_class, seconds));
       await publish(c, req.params.id, { type: "state", state: "succeeded" });
     });
+    // The scores are in jobs.moderation now; their file goes unless a blob row shares the bytes.
+    if (scores && !(await s.db.query("SELECT 1 FROM blobs WHERE sha256 = $1", [scores.sha256])).rowCount) await s.storage.remove(blobKey(scores.sha256));
     return { ok: true };
   });
 

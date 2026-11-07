@@ -91,7 +91,10 @@
     "auth.token_revoked": "Bu erişim anahtarı iptal edildi.",
     "auth.token_expired": "Bu erişim anahtarının süresi doldu.",
     "auth.scope_missing": "Bu erişim anahtarının bunu yapmaya yetkisi yok ({{scope}} gerekiyor).",
-    "content.text_refused": "Bu metin kullanılamaz ({{field}})."
+    "content.text_refused": "Bu metin kullanılamaz ({{field}}).",
+    "content.flagged": "Sonuç içerik filtresine takıldı ve gösterilmiyor. Ücret alınmadı.",
+    "content.unchecked": "Sonuç içerik filtresinden geçirilemediği için gösterilmiyor. Ücret alınmadı.",
+    "report.invalid": "Bu bildirim gönderilemiyor ({{field}}: {{reason}})."
   },
   "nav": {
     "label": "Sayfalar",
