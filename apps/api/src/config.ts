@@ -18,6 +18,8 @@ export interface Config {
   promptModel: string;
   promptTimeoutMs: number;
   moderationThresholds: string; // labels of the output classifier that hold a result: "nsfw=0.5"
+  interactiveRegions: string[]; // interactive presets run only on workers in these regions; [] = anywhere
+  retentionEvery: number; // seconds between cleanups (retention.ts); 0 = never
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -42,5 +44,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     promptModel: env.PROMPT_MODEL ?? "claude-haiku-5-5",
     promptTimeoutMs: Number(env.PROMPT_TIMEOUT_MS ?? 3000),
     moderationThresholds: env.MODERATION_THRESHOLDS ?? "nsfw=0.5",
+    interactiveRegions: (env.INTERACTIVE_REGIONS ?? "").split(",").map((r) => r.trim()).filter(Boolean),
+    retentionEvery: Number(env.RETENTION_EVERY_SECONDS ?? 600),
   };
 }

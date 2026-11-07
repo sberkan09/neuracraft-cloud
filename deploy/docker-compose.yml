@@ -29,6 +29,9 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       PROMPT_MODEL: ${PROMPT_MODEL:-claude-haiku-5-5}
       MODERATION_THRESHOLDS: ${MODERATION_THRESHOLDS:-nsfw=0.5}
+      INTERACTIVE_REGIONS: ${INTERACTIVE_REGIONS:-}
+    # Logs hold no bodies or signed URLs (docs/PRIVACY.md); rotated, at most 100 MB.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
     volumes:
       - storage:/data/storage
       - ${MODELS_DIR:-./models}:/models:ro
@@ -41,6 +44,7 @@ services:
     build: { context: .., dockerfile: deploy/api.Dockerfile, target: web }
     depends_on: { api: { condition: service_healthy } }
     ports: ["${PORT:-8000}:8000"]
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   worker:
     build: { context: .., dockerfile: deploy/worker.Dockerfile }
@@ -49,6 +53,7 @@ services:
       API_URL: http://web:8000
       WORKER_TOKEN: ${WORKER_TOKEN}
       CACHE_MAX_GB: ${WORKER_CACHE_GB:-20}
+      WORKER_REGION: ${WORKER_REGION:-}
     # One cache volume for all replicas: files by hash are shared, each worker links its own copies.
     volumes: [cache:/data]
     read_only: true

@@ -15,7 +15,8 @@ export const MAX_ATTEMPTS = 3;
 // jobs first and CPU jobs when there are none; jobs that need services ("3d", "rig") go only to
 // workers reporting all of them in `features`, and those workers take them first. A CPU worker takes
 // GPU jobs (never service jobs) only while no GPU worker has been seen for GPU_GRACE_SECONDS (so they
-// still run, slowly, without a GPU in the pool).
+// still run, slowly, without a GPU in the pool). Jobs kept to regions (jobs.regions) go only to workers
+// reporting one of them (WORKER_REGION).
 export const GPU_GRACE_SECONDS = 60;
 export async function claim(
   db: Db,
@@ -24,6 +25,7 @@ export async function claim(
   workerClass: string,
   loaded: string[],
   features: string[] = [],
+  region = "",
 ): Promise<ClaimedJob | null> {
   const concurrency = Object.fromEntries(Object.entries(plans).map(([k, p]) => [k, p.concurrentJobs]));
   let classes = workerClass === "gpu" ? ["gpu", "cpu"] : ["cpu"];
@@ -40,11 +42,12 @@ export async function claim(
          JOIN users u ON u.id = j.user_id
          LEFT JOIN busy b ON b.user_id = j.user_id
         WHERE j.state = 'queued' AND j.worker_class = ANY($3::text[]) AND j.features <@ $4::text[] AND NOT j.cancel
+          AND (cardinality(j.regions) = 0 OR $5::text = ANY(j.regions))
           AND coalesce(b.n, 0) < coalesce(($2::jsonb ->> u.plan)::int, 1)
         ORDER BY cardinality(j.features) DESC, array_position($3::text[], j.worker_class), j.priority DESC, coalesce(b.n, 0), (j.models <@ $1::uuid[]) DESC, j.created_at
         LIMIT 1
           FOR UPDATE OF j SKIP LOCKED`,
-      [loaded, JSON.stringify(concurrency), classes, offered],
+      [loaded, JSON.stringify(concurrency), classes, offered, region],
     );
     const row = r.rows[0];
     if (!row) return null;

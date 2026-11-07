@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { InjectOptions, LightMyRequestResponse } from "fastify";
+import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { harness, json, local, PNG_1x1, signUp, uploadPicture, worker, type Harness } from "./helpers.js";
 
 let h: Harness;
@@ -582,46 +584,47 @@ describe("prompt step", () => {
   });
 });
 
-describe("moderation", () => {
-  const catalog = async () => {
-    for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
-      await h.s.db.query(
-        "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
-        [kind, slug],
-      );
-  };
-  const credits = async (cookie: string) => json(await inject({ method: "GET", url: "/v1/me", headers: { cookie } })).credits as number;
-  // A preset job run through a fake GPU worker that uploads these files; returns the finished job.
-  const runPreset = async (cookie: string, files: Record<string, Buffer>) => {
-    await catalog();
-    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");  // only this job to claim
-    const sub = await inject({
-      method: "POST",
-      url: "/v1/presets/sketch_to_scene/jobs",
-      headers: { cookie },
-      payload: { params: { mode: "map", narrative: "Nehrin üzerinde ahşap bir köprü" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } },
-    });
-    assert.equal(sub.statusCode, 201, sub.body);
-    const jobId = json(sub).job.id;
-    const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test" } })).workerId;
-    const claimed = json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job;
-    assert.equal(claimed.jobId, jobId);
-    const names = Object.keys(files);
-    const types = (n: string) => (n.endsWith(".json") ? "application/json" : "image/png");
-    const up = json(await inject({ method: "POST", url: `/v1/worker/jobs/${jobId}/uploads`, headers: worker, payload: { workerId, outputs: names.map((name) => ({ name, bytes: files[name]!.length, contentType: types(name) })) } }));
-    for (const u of up.uploads) assert.equal((await inject({ method: "PUT", url: local(u.url), payload: files[u.name]!, headers: { "content-type": "application/octet-stream" } })).statusCode, 200);
-    const done = await inject({
-      method: "POST",
-      url: `/v1/worker/jobs/${jobId}/complete`,
-      headers: worker,
-      payload: { workerId, workerSeconds: 3, outputs: up.uploads.map((u: { name: string; key: string }) => ({ name: u.name, key: u.key, bytes: files[u.name]!.length, sha256: "", contentType: types(u.name) })) },
-    });
-    assert.equal(done.statusCode, 200, done.body);
-    return json(await inject({ method: "GET", url: `/v1/jobs/${jobId}`, headers: { cookie } })).job;
-  };
-  const scores = (nsfw: number) => Buffer.from(JSON.stringify({ model: "nsfw.onnx", labels: ["normal", "nsfw"], scores: { normal: 1 - nsfw, nsfw }, frames: [[1 - nsfw, nsfw]] }));
-  const outputAsset = async (jobId: string) => (await h.s.db.query("SELECT a.id, a.status FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 AND o.name = 'scene.png'", [jobId])).rows[0];
+// Preset jobs through a fake GPU worker (moderation, retention).
+const presetCatalog = async () => {
+  for (const [slug, kind] of [["dreamshaper-8", "sd"], ["controlnet-scribble", "controlnet"], ["lcm-lora-sd15", "lora"], ["taesd", "taesd"], ["nsfw-classifier", "onnx"]])
+    await h.s.db.query(
+      "INSERT INTO assets (owner_id, kind, model_kind, name, slug, license, status) VALUES (NULL, 'model', $1, $2, $2, 'test', 'ready') ON CONFLICT DO NOTHING",
+      [kind, slug],
+    );
+};
+const credits = async (cookie: string) => json(await inject({ method: "GET", url: "/v1/me", headers: { cookie } })).credits as number;
+// A preset job run through a fake GPU worker that uploads these files; returns the finished job.
+const runPreset = async (cookie: string, files: Record<string, Buffer>, sketch = PNG_1x1) => {
+  await presetCatalog();
+  await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");  // only this job to claim
+  const sub = await inject({
+    method: "POST",
+    url: "/v1/presets/sketch_to_scene/jobs",
+    headers: { cookie },
+    payload: { params: { mode: "map", narrative: "Nehrin üzerinde ahşap bir köprü" }, inputs: { sketch: { inline: sketch.toString("base64"), contentType: "image/png" } } },
+  });
+  assert.equal(sub.statusCode, 201, sub.body);
+  const jobId = json(sub).job.id;
+  const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test" } })).workerId;
+  const claimed = json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job;
+  assert.equal(claimed.jobId, jobId);
+  const names = Object.keys(files);
+  const types = (n: string) => (n.endsWith(".json") ? "application/json" : "image/png");
+  const up = json(await inject({ method: "POST", url: `/v1/worker/jobs/${jobId}/uploads`, headers: worker, payload: { workerId, outputs: names.map((name) => ({ name, bytes: files[name]!.length, contentType: types(name) })) } }));
+  for (const u of up.uploads) assert.equal((await inject({ method: "PUT", url: local(u.url), payload: files[u.name]!, headers: { "content-type": "application/octet-stream" } })).statusCode, 200);
+  const done = await inject({
+    method: "POST",
+    url: `/v1/worker/jobs/${jobId}/complete`,
+    headers: worker,
+    payload: { workerId, workerSeconds: 3, outputs: up.uploads.map((u: { name: string; key: string }) => ({ name: u.name, key: u.key, bytes: files[u.name]!.length, sha256: "", contentType: types(u.name) })) },
+  });
+  assert.equal(done.statusCode, 200, done.body);
+  return json(await inject({ method: "GET", url: `/v1/jobs/${jobId}`, headers: { cookie } })).job;
+};
+const scores = (nsfw: number) => Buffer.from(JSON.stringify({ model: "nsfw.onnx", labels: ["normal", "nsfw"], scores: { normal: 1 - nsfw, nsfw }, frames: [[1 - nsfw, nsfw]] }));
+const outputAsset = async (jobId: string) => (await h.s.db.query("SELECT a.id, a.status FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 AND o.name = 'scene.png'", [jobId])).rows[0];
 
+describe("moderation", () => {
   it("holds what a classifier stub flags: the job fails content.flagged, nothing is downloadable, the reservation comes back", async () => {
     const a = await signUp(h.app);
     const start = await credits(a.cookie);
@@ -724,5 +727,120 @@ describe("moderation", () => {
     await dismissReport(h.s.db, auto.id, "ayse");
     assert.equal((await outputAsset(held.id)).status, "held");
     await assert.rejects(dismissReport(h.s.db, auto.id, "ayse"));
+  });
+});
+
+describe("retention", () => {
+  const unique = () => Buffer.concat([PNG_1x1, randomBytes(16)]);  // a valid header, bytes of its own
+  const later = (hours: number) => new Date(Date.now() + hours * 3600_000);
+  const blobFile = async (assetId: string) => {
+    const { blobKey, LocalStorage } = await import("../src/storage.js");
+    const sha = (await h.s.db.query("SELECT sha256 FROM assets WHERE id = $1", [assetId])).rows[0].sha256 as string;
+    return (h.s.storage as InstanceType<typeof LocalStorage>).path(blobKey(sha));
+  };
+  const exists = async (assetId: string) => (await h.s.db.query("SELECT 1 FROM assets WHERE id = $1", [assetId])).rowCount === 1;
+  const clean = async (hours: number) => (await import("../src/retention.js")).runRetention(h.s.db, h.s.storage, later(hours));
+
+  it("deletes a preset job's sketch and narrative after a day and its result after a week; the job row stays", async () => {
+    const a = await signUp(h.app);
+    const job = await runPreset(a.cookie, { "scene.png": unique(), "moderation.json": scores(0.01) }, unique());
+    const input = (await h.s.db.query("SELECT a.id FROM jobs j JOIN assets a ON a.id = ANY(j.files) WHERE j.id = $1 AND a.kind = 'input'", [job.id])).rows[0].id as string;
+    const inputFile = await blobFile(input), output = job.outputs[0].assetId as string, outputFile = await blobFile(output);
+    assert.ok(existsSync(inputFile) && existsSync(outputFile));
+
+    await clean(23);
+    assert.ok(await exists(input));
+    const r = await clean(25);
+    assert.ok(r.assets >= 1 && r.jobs >= 1);
+    assert.ok(!(await exists(input)) && !existsSync(inputFile));
+    assert.ok(await exists(output) && existsSync(outputFile));
+    const row = (await h.s.db.query("SELECT prompt_info, workflow, worker_seconds, preset, scrubbed_at FROM jobs WHERE id = $1", [job.id])).rows[0];
+    assert.deepEqual(row.prompt_info, { source: "template", instructions: "sketch_to_scene/1", fallback: "no llm configured", scrubbed: true });
+    assert.ok(!JSON.stringify(row.workflow).includes("bridge") && !JSON.stringify(row.workflow).includes("Nehrin"));
+    assert.equal(row.workflow.steps.find((st: { op: string }) => st.op === "txt2img").prompt, undefined);
+    assert.deepEqual([row.worker_seconds, row.preset], [3, "sketch_to_scene"]);
+    assert.ok(row.scrubbed_at);
+
+    await clean(7 * 24 + 1);
+    assert.ok(!(await exists(output)) && !existsSync(outputFile));
+    const after = json(await inject({ method: "GET", url: `/v1/jobs/${job.id}`, headers: { cookie: a.cookie } })).job;
+    assert.deepEqual([after.state, after.outputs], ["succeeded", []]);
+  });
+
+  it("keeps shared bytes and reported evidence; removed assets, abandoned uploads and deleted accounts go", async () => {
+    const { dismissReport } = await import("../src/moderation.js");
+    const a = await signUp(h.app);
+    const b = await signUp(h.app);
+    // The same picture: a's upload (kept) and b's inline sketch (expires): the bytes stay for a.
+    const shared = unique();
+    const kept = await uploadPicture(h.app, a.cookie, shared);
+    const job = await runPreset(b.cookie, { "scene.png": unique(), "moderation.json": scores(0.01) }, shared);
+    const sharedFile = await blobFile(kept);
+    // b reports the result: it stays past its week until the report is resolved.
+    const output = job.outputs[0].assetId as string;
+    const rep = json(await inject({ method: "POST", url: `/v1/assets/${output}/report`, headers: { cookie: b.cookie }, payload: { reason: "other" } })).report.id;
+    await clean(8 * 24);
+    assert.ok(existsSync(sharedFile) && (await exists(kept)));
+    assert.ok(await exists(output));
+    const reportRow = (await h.s.db.query("SELECT snapshot FROM reports WHERE id = $1", [rep])).rows[0];
+    assert.equal(reportRow.snapshot.prompt.narrative, "Nehrin üzerinde ahşap bir köprü");  // evidence until resolved
+    assert.ok((await h.s.db.query("SELECT prompt_info FROM jobs WHERE id = $1", [job.id])).rows[0].prompt_info.narrative);
+    await dismissReport(h.s.db, rep, "ayse");
+    await clean(8 * 24);
+    assert.ok(!(await exists(output)));
+    assert.equal((await h.s.db.query("SELECT asset_id FROM reports WHERE id = $1", [rep])).rows[0].asset_id, null);  // the record stays
+    assert.ok(!(await h.s.db.query("SELECT prompt_info FROM jobs WHERE id = $1", [job.id])).rows[0].prompt_info.narrative);
+    await clean(8 * 24 + 31 * 24);
+    assert.equal((await h.s.db.query("SELECT snapshot FROM reports WHERE id = $1", [rep])).rows[0].snapshot.prompt, undefined);
+
+    // a removes the picture: row and (now unshared) bytes go at the next cleanup.
+    assert.equal((await inject({ method: "DELETE", url: `/v1/assets/${kept}`, headers: { cookie: a.cookie } })).statusCode, 200);
+    await clean(2);
+    assert.ok(!(await exists(kept)) && !existsSync(sharedFile));
+
+    // An upload never completed goes after a day.
+    const started = json(await inject({ method: "POST", url: "/v1/assets", headers: { cookie: a.cookie }, payload: { name: "x.png", kind: "input", bytes: 10, contentType: "image/png" } })).asset.id;
+    await clean(1);
+    assert.ok(await exists(started));
+    await clean(25);
+    assert.ok(!(await exists(started)));
+
+    // Deleting the account: the password confirms it; everything it owned goes.
+    const c = await signUp(h.app);
+    const mine = await uploadPicture(h.app, c.cookie, unique());
+    const mineFile = await blobFile(mine);
+    assert.equal((await inject({ method: "DELETE", url: "/v1/me", headers: { cookie: c.cookie }, payload: { password: "wrong" } })).statusCode, 401);
+    assert.equal((await inject({ method: "DELETE", url: "/v1/me", headers: { cookie: c.cookie }, payload: { password: "correct horse battery" } })).statusCode, 200);
+    assert.equal((await inject({ method: "GET", url: "/v1/me", headers: { cookie: c.cookie } })).statusCode, 401);
+    assert.ok(!(await exists(mine)));
+    await clean(2);
+    assert.ok(!existsSync(mineFile));
+  });
+
+  it("keeps interactive presets to the configured regions", async () => {
+    const a = await signUp(h.app);
+    await presetCatalog();
+    await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");
+    h.s.config.interactiveRegions = ["eu"];
+    try {
+      const sub = await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } });
+      const jobId = json(sub).job.id;
+      const claimAs = async (region?: string) => {
+        const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 2, memoryBytes: 1, engineVersion: "test", ...(region ? { region } : {}) } })).workerId;
+        return json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job;
+      };
+      assert.equal(await claimAs(), null);
+      assert.equal(await claimAs("us"), null);
+      assert.equal((await claimAs("eu")).jobId, jobId);
+    } finally {
+      h.s.config.interactiveRegions = [];
+    }
+  });
+
+  it("keeps signed storage tokens and query strings out of request logs", async () => {
+    const { logUrl } = await import("../src/app.js");
+    assert.equal(logUrl("/v1/storage/eyJrIjoiYmxvYnMvYWJjIn0.c2ln"), "/v1/storage/<signed>");
+    assert.equal(logUrl("/v1/jobs/1?limit=5"), "/v1/jobs/1");
+    assert.equal(logUrl("/v1/presets/sketch_to_scene/jobs"), "/v1/presets/sketch_to_scene/jobs");
   });
 });

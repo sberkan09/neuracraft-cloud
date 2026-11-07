@@ -142,6 +142,11 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
 
 ## Safety and abuse
 
+What is stored, for how long and where, and the sub-processors: [PRIVACY.md](PRIVACY.md). A cleanup
+(`apps/api/src/retention.ts`, every 10 minutes) deletes expired preset inputs (24 h) and results
+(7 days), the narratives on finished preset jobs, removed assets and the bytes nothing refers to any
+more. `DELETE /v1/me` deletes an account with everything it owns.
+
 * Every generated picture or video frame passes an output classifier (an ONNX model run by the
   engine itself) and every prompt a text filter before results are released; flagged results are
   held for review. This is independent of which model made them. Today this covers preset jobs
