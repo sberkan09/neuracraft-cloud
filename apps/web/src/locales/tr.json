@@ -87,12 +87,16 @@
     "network": "Sunucuya ulaşılamıyor.",
     "preset.unknown": "Böyle bir hazır ayar yok.",
     "preset.params_invalid": "Hazır ayar parametresi geçersiz: {{field}} ({{reason}}).",
-    "preset.unavailable": "Bu hazır ayar şu anda kullanılamıyor (eksik modeller: {{models}})."
+    "preset.unavailable": "Bu hazır ayar şu anda kullanılamıyor (eksik modeller: {{models}}).",
+    "auth.token_revoked": "Bu erişim anahtarı iptal edildi.",
+    "auth.token_expired": "Bu erişim anahtarının süresi doldu.",
+    "auth.scope_missing": "Bu erişim anahtarının bunu yapmaya yetkisi yok ({{scope}} gerekiyor)."
   },
   "nav": {
     "label": "Sayfalar",
     "tasks": "Görevler",
-    "studio": "Studio"
+    "studio": "Studio",
+    "tokens": "API"
   },
   "studio": {
     "openInStudio": "Studio'da aç",
@@ -313,5 +317,30 @@
     "unavailable": "3D görüntüleyici yüklenemedi; modeli indirip açabilirsin.",
     "download": "{{name}} dosyasını indir",
     "badge": "3D model"
+  },
+  "tokens": {
+    "title": "Erişim anahtarları",
+    "intro": "Betikler ve uygulamalar için: bir anahtar, izin verdiğin kapsamlarda senin adına çalışır (hesabını, ödemelerini ya da anahtarlarını asla değiştiremez). Authorization: Bearer <anahtar> başlığıyla gönder.",
+    "name": "Ad",
+    "scopes": "Kapsamlar",
+    "scope": {
+      "jobs:submit": "İş gönderme",
+      "jobs:read": "İşleri okuma",
+      "assets:write": "Dosya yükleme",
+      "assets:read": "Dosya indirme"
+    },
+    "expires": "Geçerlilik (gün)",
+    "noExpiry": "süresiz",
+    "create": "Anahtar oluştur",
+    "secretOnce": "Şimdi kopyala: yalnızca bir kez gösterilir.",
+    "copy": "Kopyala",
+    "list": "Anahtarların",
+    "none": "Henüz anahtar yok.",
+    "never": "hiç",
+    "created": "{{at}} oluşturuldu",
+    "lastUsed": "son kullanım {{at}}",
+    "expiresAt": "{{at}} sona erer",
+    "revoked": "iptal edildi",
+    "revoke": "İptal et"
   }
 }

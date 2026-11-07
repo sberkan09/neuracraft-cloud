@@ -53,6 +53,79 @@ export async function sessionUser(db: Db, req: FastifyRequest): Promise<SessionU
   return r.rows[0] ?? null;
 }
 
-export async function requireUser(db: Db, req: FastifyRequest): Promise<SessionUser> {
+// ---- Bearer tokens (issue #16) ----
+
+// What a token may do. Nothing that changes the account, billing or tokens is ever a scope: those need
+// a session.
+export const SCOPES = ["jobs:submit", "jobs:read", "assets:write", "assets:read"] as const;
+export type Scope = (typeof SCOPES)[number];
+// "session": only a signed-in person (cookie), never a token; "any": a session or any valid token.
+export type Access = Scope | "session" | "any";
+
+export interface AuthedUser extends SessionUser {
+  tokenId?: string; // set when the request carried a bearer token
+}
+
+const TOKEN = /^nc_(pat|app)_[A-Za-z0-9_-]{32}$/;
+
+export async function createToken(
+  db: Db,
+  userId: string,
+  kind: "pat" | "app",
+  name: string,
+  scopes: Scope[],
+  expiresAt: Date | null,
+): Promise<{ id: string; secret: string; prefix: string }> {
+  const secret = `nc_${kind}_${randomBytes(24).toString("base64url")}`;
+  const prefix = secret.slice(0, 12);
+  const r = await db.query<{ id: string }>(
+    "INSERT INTO api_tokens (user_id, kind, name, prefix, secret_hash, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    [userId, kind, name, prefix, hashToken(secret), scopes, expiresAt],
+  );
+  return { id: r.rows[0]!.id, secret, prefix };
+}
+
+// Requests per minute a token may make (per API process).
+export const TOKEN_RATE_PER_MINUTE = 240;
+const buckets = new Map<string, { tokens: number; at: number }>();
+function takeToken(id: string): boolean {
+  const now = Date.now();
+  const b = buckets.get(id) ?? { tokens: TOKEN_RATE_PER_MINUTE, at: now };
+  b.tokens = Math.min(TOKEN_RATE_PER_MINUTE, b.tokens + ((now - b.at) / 60000) * TOKEN_RATE_PER_MINUTE);
+  b.at = now;
+  if (b.tokens < 1) {
+    buckets.set(id, b);
+    return false;
+  }
+  b.tokens -= 1;
+  buckets.set(id, b);
+  if (buckets.size > 100000) buckets.clear();  // bounded memory
+  return true;
+}
+
+async function tokenUser(db: Db, secret: string, access: Access): Promise<AuthedUser> {
+  if (!TOKEN.test(secret)) fail(401, "auth.required");
+  const r = await db.query<SessionUser & { token_id: string; scopes: string[]; expired: boolean; revoked: boolean }>(
+    `SELECT u.id, u.email, u.locale, u.plan, t.id AS token_id, t.scopes,
+            (t.expires_at IS NOT NULL AND t.expires_at <= now()) AS expired, t.revoked_at IS NOT NULL AS revoked
+       FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.secret_hash = $1`,
+    [hashToken(secret)],
+  );
+  const t = r.rows[0] ?? fail(401, "auth.required");
+  if (t.revoked) fail(401, "auth.token_revoked");
+  if (t.expired) fail(401, "auth.token_expired");
+  if (access === "session") fail(403, "forbidden");
+  if (access !== "any" && !t.scopes.includes(access)) fail(403, "auth.scope_missing", { scope: access });
+  if (!takeToken(t.token_id)) fail(429, "rate_limited");
+  await db.query("UPDATE api_tokens SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')", [t.token_id]);
+  return { id: t.id, email: t.email, locale: t.locale, plan: t.plan, tokenId: t.token_id };
+}
+
+// The signed-in person (session cookie) or, with an `Authorization: Bearer nc_...` header, the token's
+// user, if the token is live and holds `access`. Token requests carry no ambient credential, so they
+// need no CSRF protection.
+export async function requireUser(db: Db, req: FastifyRequest, access: Access = "any"): Promise<AuthedUser> {
+  const header = req.headers.authorization;
+  if (typeof header === "string" && header.startsWith("Bearer ")) return tokenUser(db, header.slice(7).trim(), access);
   return (await sessionUser(db, req)) ?? fail(401, "auth.required");
 }

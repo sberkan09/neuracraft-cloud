@@ -61,12 +61,12 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get("/v1/me", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "any");
     return { user: u, credits: await balance(s.db, u.id) };
   });
 
   app.patch<{ Body: { locale?: string } }>("/v1/me", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "session");
     const locale = req.body?.locale;
     if (!LOCALES.includes(locale as never)) fail(400, "request.invalid");
     await s.db.query("UPDATE users SET locale = $2 WHERE id = $1", [u.id, locale]);

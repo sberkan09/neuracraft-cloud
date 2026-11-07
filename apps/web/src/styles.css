@@ -142,3 +142,9 @@ input.narrow { width: 80px; }
 .model-view { display: block; width: 260px; height: 260px; border-radius: 10px; background: var(--bg); }
 .model-view.loading { display: grid; place-items: center; font-size: 13px; }
 @media (max-width: 600px) { .model-view { width: 100%; } }
+
+/* Access tokens */
+.notice { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, currentColor 6%, transparent); }
+code.secret { display: block; word-break: break-all; margin: 6px 0; font-size: 13px; }
+ul.tokens { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+ul.tokens li { display: block; }

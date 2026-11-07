@@ -56,7 +56,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Body: { name?: string; kind?: string; bytes?: number; contentType?: string; modelKind?: string; license?: string } }>(
     "/v1/assets",
     async (req, reply) => {
-      const u = await requireUser(s.db, req);
+      const u = await requireUser(s.db, req, "assets:write");
       const b = req.body ?? {};
       const kind = b.kind === "model" ? "model" : b.kind === "input" ? "input" : fail(400, "request.invalid", { field: "kind" });
       const bytes = Number(b.bytes);
@@ -79,7 +79,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
 
   // The bytes are in: hash them, store them content-addressed, mark the asset ready.
   app.post<{ Params: { id: string } }>("/v1/assets/:id/complete", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "assets:write");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
     const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND status = 'uploading'", [req.params.id, u.id]);
     const a = r.rows[0] ?? fail(404, "not_found");
@@ -109,7 +109,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<{ Querystring: { kind?: string } }>("/v1/assets", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "assets:read");
     const r = await s.db.query<AssetRow>(
       "SELECT * FROM assets WHERE owner_id = $1 AND status IN ('ready', 'held') AND ($2::text IS NULL OR kind = $2) ORDER BY created_at DESC LIMIT 200",
       [u.id, req.query.kind ?? null],
@@ -125,7 +125,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
 
   // A short-lived link to the bytes of the user's own picture or result (models are not handed out).
   app.get<{ Params: { id: string } }>("/v1/assets/:id/content", async (req, reply) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "assets:read");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
     const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND status = 'ready' AND kind <> 'model'", [req.params.id, u.id]);
     const a = r.rows[0] ?? fail(404, "not_found");
@@ -133,7 +133,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.delete<{ Params: { id: string } }>("/v1/assets/:id", async (req) => {
-    const u = await requireUser(s.db, req);
+    const u = await requireUser(s.db, req, "assets:write");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
     const r = await s.db.query("UPDATE assets SET status = 'removed' WHERE id = $1 AND owner_id = $2 AND status <> 'removed'", [req.params.id, u.id]);
     if (!r.rowCount) fail(404, "not_found");

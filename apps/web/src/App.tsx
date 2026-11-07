@@ -4,11 +4,12 @@ import { api, ApiError, type User } from "./api";
 import { LANGUAGES, setLanguage, type Language } from "./i18n";
 import { Auth } from "./pages/Auth";
 import { Home } from "./pages/Home";
+import { Tokens } from "./pages/Tokens";
 import type { Workflow } from "./studio/graph";
 import { loadDraft, Studio } from "./studio/Studio";
 
-type Page = "home" | "studio";
-const pageFromHash = (): Page => (location.hash === "#studio" ? "studio" : "home");
+type Page = "home" | "studio" | "tokens";
+const pageFromHash = (): Page => (location.hash === "#studio" ? "studio" : location.hash === "#tokens" ? "tokens" : "home");
 
 export function App() {
   const { t, i18n } = useTranslation();
@@ -31,7 +32,7 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const go = (p: Page) => {
-    location.hash = p === "studio" ? "studio" : "";
+    location.hash = p === "home" ? "" : p;
     setPage(p);
   };
   const openStudio = (wf: unknown) => {
@@ -55,6 +56,7 @@ export function App() {
           <nav className="segmented" aria-label={t("nav.label")}>
             <button type="button" aria-pressed={page === "home"} onClick={() => go("home")}>{t("nav.tasks")}</button>
             <button type="button" aria-pressed={page === "studio"} onClick={() => go("studio")}>{t("nav.studio")}</button>
+            <button type="button" aria-pressed={page === "tokens"} onClick={() => go("tokens")}>{t("nav.tokens")}</button>
           </nav>
         )}
         <div className="top-actions">
@@ -80,6 +82,8 @@ export function App() {
           <Auth onIn={setUser} />
         ) : page === "studio" ? (
           <Studio workflow={workflow} onWorkflow={setWorkflow} />
+        ) : page === "tokens" ? (
+          <Tokens />
         ) : (
           <Home openStudio={openStudio} />
         )}

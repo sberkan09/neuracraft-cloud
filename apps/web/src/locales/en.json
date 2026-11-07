@@ -87,12 +87,16 @@
     "network": "Cannot reach the server.",
     "preset.unknown": "There is no such preset.",
     "preset.params_invalid": "Invalid preset parameter {{field}}: {{reason}}.",
-    "preset.unavailable": "This preset is not available right now (missing models: {{models}})."
+    "preset.unavailable": "This preset is not available right now (missing models: {{models}}).",
+    "auth.token_revoked": "This access token was revoked.",
+    "auth.token_expired": "This access token has expired.",
+    "auth.scope_missing": "This access token may not do that (it needs {{scope}})."
   },
   "nav": {
     "label": "Pages",
     "tasks": "Tasks",
-    "studio": "Studio"
+    "studio": "Studio",
+    "tokens": "API"
   },
   "studio": {
     "openInStudio": "Open in Studio",
@@ -313,5 +317,30 @@
     "unavailable": "The 3D viewer could not be loaded; download the model instead.",
     "download": "Download {{name}}",
     "badge": "3D model"
+  },
+  "tokens": {
+    "title": "Access tokens",
+    "intro": "For scripts and apps: a token acts as you within its scopes (it can never change your account, billing or tokens). Send it as Authorization: Bearer <token>.",
+    "name": "Name",
+    "scopes": "Scopes",
+    "scope": {
+      "jobs:submit": "Submit jobs",
+      "jobs:read": "Read jobs",
+      "assets:write": "Upload files",
+      "assets:read": "Download files"
+    },
+    "expires": "Expires after (days)",
+    "noExpiry": "never",
+    "create": "Create token",
+    "secretOnce": "Copy it now: it is shown only once.",
+    "copy": "Copy",
+    "list": "Your tokens",
+    "none": "No tokens yet.",
+    "never": "never",
+    "created": "created {{at}}",
+    "lastUsed": "last used {{at}}",
+    "expiresAt": "expires {{at}}",
+    "revoked": "revoked",
+    "revoke": "Revoke"
   }
 }

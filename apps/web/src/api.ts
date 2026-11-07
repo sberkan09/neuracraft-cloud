@@ -43,7 +43,23 @@ export interface Asset {
 // Inputs are pictures or 3D models (.glb).
 export const isModelFile = (a: { name: string }) => /\.glb$/i.test(a.name);
 
+export interface ApiToken {
+  id: string;
+  kind: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+}
+
 export const api = {
+  tokens: () => call<{ tokens: ApiToken[] }>("GET", "/v1/tokens"),
+  createToken: (name: string, scopes: string[], expiresInDays?: number) =>
+    call<{ token: ApiToken; secret: string }>("POST", "/v1/tokens", { name, scopes, ...(expiresInDays ? { expiresInDays } : {}) }),
+  revokeToken: (id: string) => call("DELETE", `/v1/tokens/${id}`),
   me: () => call<{ user: User; credits: number }>("GET", "/v1/me"),
   signup: (email: string, password: string, locale: string) => call<{ user: User }>("POST", "/v1/auth/signup", { email, password, locale }),
   login: (email: string, password: string) => call<{ user: User }>("POST", "/v1/auth/login", { email, password }),

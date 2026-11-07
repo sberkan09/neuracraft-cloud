@@ -137,6 +137,17 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
   network except the API and storage, and nothing secret but their worker token. The engine's file
   readers are fuzzed (`neuracraft/fuzz`).
 * Rate limits per account and IP; sessions in httpOnly cookies; CSRF tokens on state changes.
+* **Bearer tokens** for native clients and scripts (`Authorization: Bearer nc_pat_…` / `nc_app_…`):
+  - **Kinds**: personal access tokens (made and revoked in the web app, `/v1/tokens`) and app tokens
+    issued to a client application (`create-token` CLI).
+  - **Storage**: only a SHA-256 of the secret is stored, and the secret is shown once. The prefixes
+    let secret scanners find leaked tokens.
+  - **Scopes**: `jobs:submit` (presets included), `jobs:read`, `assets:write` and `assets:read`. Nothing
+    that changes the account, billing or tokens is a scope; those need a session.
+  - **Revocation and expiry** take effect on the next request (`auth.token_revoked`,
+    `auth.token_expired`); a missing scope gives `auth.scope_missing`.
+  - **Rate limit**: 240 requests a minute per token, per API process.
+  - **CSRF**: token requests carry no ambient credential, so they need no CSRF token.
 
 ## Billing
 
