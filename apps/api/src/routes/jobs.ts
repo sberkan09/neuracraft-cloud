@@ -78,7 +78,7 @@ export async function queueJob(
     fail(503, "job.no_3d_worker", { services: checked.features.join(", ") });
   // Interactive jobs never wait minutes for a GPU: without one seen lately (in their regions), they are
   // refused at once so the app can say "try again in a minute".
-  if (opts.latency === "interactive" && !(await c.query(GPU_WORKER, [opts.regions ?? [], s.config.interactiveGraceSeconds])).rowCount)
+  if (opts.latency === "interactive" && !s.config.interactiveOnCpu && !(await c.query(GPU_WORKER, [opts.regions ?? [], s.config.interactiveGraceSeconds])).rowCount)
     fail(503, "job.no_gpu_worker");
   await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
   const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);

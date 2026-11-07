@@ -30,6 +30,8 @@ services:
       PROMPT_MODEL: ${PROMPT_MODEL:-claude-haiku-5-5}
       MODERATION_THRESHOLDS: ${MODERATION_THRESHOLDS:-nsfw=0.5}
       INTERACTIVE_REGIONS: ${INTERACTIVE_REGIONS:-}
+      # The compose stack's worker is a CPU worker: let it take presets (slowly). Off in production.
+      INTERACTIVE_ON_CPU: ${INTERACTIVE_ON_CPU:-1}
     # Logs hold no bodies or signed URLs (docs/PRIVACY.md); rotated, at most 100 MB.
     logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
     volumes:

@@ -29,6 +29,7 @@ export async function claim(
   features: string[] = [],
   region = "",
   interactiveOnly = false, // a worker kept for interactive jobs (INTERACTIVE_ONLY=1): warm, never busy with long ones
+  interactiveOnCpu = false, // INTERACTIVE_ON_CPU=1 (development, tests): CPU workers take them too
 ): Promise<ClaimedJob | null> {
   const concurrency = Object.fromEntries(Object.entries(plans).map(([k, p]) => [k, p.concurrentJobs]));
   let classes = workerClass === "gpu" ? ["gpu", "cpu"] : ["cpu"];
@@ -46,13 +47,13 @@ export async function claim(
          LEFT JOIN busy b ON b.user_id = j.user_id
         WHERE j.state = 'queued' AND j.worker_class = ANY($3::text[]) AND j.features <@ $4::text[] AND NOT j.cancel
           AND (cardinality(j.regions) = 0 OR $5::text = ANY(j.regions))
-          AND (j.latency <> 'interactive' OR $6::text = 'gpu')
+          AND (j.latency <> 'interactive' OR $6::text = 'gpu' OR $8::boolean)
           AND (NOT $7::boolean OR j.latency = 'interactive')
           AND coalesce(b.n, 0) < coalesce(($2::jsonb ->> u.plan)::int, 1)
         ORDER BY cardinality(j.features) DESC, array_position($3::text[], j.worker_class), j.priority DESC, (j.latency = 'interactive') DESC, coalesce(b.n, 0), (j.models <@ $1::uuid[]) DESC, j.created_at
         LIMIT 1
           FOR UPDATE OF j SKIP LOCKED`,
-      [loaded, JSON.stringify(concurrency), classes, offered, region, workerClass, interactiveOnly],
+      [loaded, JSON.stringify(concurrency), classes, offered, region, workerClass, interactiveOnly, interactiveOnCpu],
     );
     const row = r.rows[0];
     if (!row) return null;

@@ -1,0 +1,1 @@
+{"_class_name":"ControlNetModel","act_fn":"silu","attention_head_dim":[2,2],"block_out_channels":[8,16],"conditioning_embedding_out_channels":[4,4,4,4],"cross_attention_dim":6,"down_block_types":["CrossAttnDownBlock2D","DownBlock2D"],"flip_sin_to_cos":true,"freq_shift":0,"in_channels":4,"layers_per_block":1,"norm_eps":1e-5,"norm_num_groups":4,"use_linear_projection":true}

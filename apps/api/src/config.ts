@@ -21,6 +21,7 @@ export interface Config {
   interactiveRegions: string[]; // interactive presets run only on workers in these regions; [] = anywhere
   retentionEvery: number; // seconds between cleanups (retention.ts); 0 = never
   interactiveGraceSeconds: number; // interactive jobs are refused when no GPU worker was seen for this long
+  interactiveOnCpu: boolean; // development and tests only: interactive jobs may run on CPU workers (and need no GPU)
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -48,5 +49,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     interactiveRegions: (env.INTERACTIVE_REGIONS ?? "").split(",").map((r) => r.trim()).filter(Boolean),
     retentionEvery: Number(env.RETENTION_EVERY_SECONDS ?? 600),
     interactiveGraceSeconds: Number(env.INTERACTIVE_GRACE_SECONDS ?? 60),
+    interactiveOnCpu: env.INTERACTIVE_ON_CPU === "1",
   };
 }
