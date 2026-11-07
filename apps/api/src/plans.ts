@@ -23,5 +23,5 @@ export const plans: Record<string, Plan> = {
 export const planFor = (name: string): Plan => plans[name] ?? plans.free!;
 
 // 1 credit = 1000 millicredits; a CPU worker minute costs 1 credit, a GPU minute 10 (to be tuned).
-export const ratePerSecond: Record<string, number> = { cpu: 1000 / 60, gpu: 10000 / 60 };
+export const ratePerSecond: Record<string, number> = { cpu: 1000 / 60, gpu: 10000 / 60, gpu3d: 10000 / 60 };
 export const cost = (workerClass: string, seconds: number) => Math.ceil((ratePerSecond[workerClass] ?? ratePerSecond.cpu!) * seconds);

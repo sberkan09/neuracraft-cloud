@@ -79,6 +79,7 @@
     "credits.insufficient": "Bu iş için yeterli kredin yok.",
     "job.not_cancellable": "Bu iş zaten bitti.",
     "job.failed": "İş başarısız oldu.",
+    "job.no_3d_worker": "Şu anda 3D modeli üretebilecek bir GPU çalışanı yok. Biraz sonra yeniden dene.",
     "worker.unauthorized": "Worker yetkili değil.",
     "worker.lease_lost": "Worker bu işi kaybetti.",
     "model.unsupported": "Bu model desteklenmiyor.",
@@ -176,7 +177,8 @@
       "onnx": "ONNX modeli",
       "interpolate": "Ara kare üret",
       "depth_mesh": "Derinlikten 3D",
-      "render": "3D görüntü"
+      "render": "3D görüntü",
+      "image_to_3d": "Resimden 3D"
     },
     "fields": {
       "amplitude": "Salınım",
@@ -241,7 +243,9 @@
       "pitch": "Kamera yüksekliği",
       "fov": "Görüş açısı",
       "background": "Arka plan",
-      "lighting": "Işıklandırma"
+      "lighting": "Işıklandırma",
+      "texture": "Doku boyutu",
+      "faces": "Üçgen sayısı"
     },
     "problem": {
       "required": "Adım {{step}}: {{field}} gerekli.",
@@ -273,7 +277,8 @@
       "onnx": "ONNX'e aktarılmış bir resim modeli: arka plan silme, derinlik, büyütme, onarım, stil",
       "interpolate": "RIFE ile ara kareler (her geçiş kare hızını iki katına çıkarır)",
       "depth_mesh": "Bir resmin derinliğiyle yükseltilip resmin kendisiyle kaplanan 3D kabartması",
-      "render": "Bir 3D modelin görüntüleri: tek kare ya da dönen bir klip"
+      "render": "Bir 3D modelin görüntüleri: tek kare ya da dönen bir klip",
+      "image_to_3d": "Tek bir resimden tam bir 3D model (GPU'da TRELLIS.2); saydam arka plan nesneyi belirler"
     }
   },
   "model": {

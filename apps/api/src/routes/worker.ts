@@ -46,14 +46,18 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     authorize(req);
     const { workerId, loadedModels = [] } = req.body ?? ({} as WorkerClaimRequest);
     if (!UUID.test(String(workerId))) fail(400, "request.invalid");
-    const w = await s.db.query<{ class: string }>("UPDATE workers SET last_seen_at = now(), loaded = $2 WHERE id = $1 RETURNING class", [
+    const w = await s.db.query<{ class: string; capabilities: WorkerCapabilities }>(
+      "UPDATE workers SET last_seen_at = now(), loaded = $2 WHERE id = $1 RETURNING class, capabilities",
+      [
       workerId,
-      loadedModels.filter((m) => UUID.test(m)),
-    ]);
+        loadedModels.filter((m) => UUID.test(m)),
+      ],
+    );
     const workerClass = w.rows[0]?.class ?? fail(401, "worker.unauthorized");
+    const features = Array.isArray(w.rows[0]?.capabilities?.features) ? w.rows[0]!.capabilities.features!.map(String) : [];
     const deadline = Date.now() + Math.min(25, Math.max(0, Number(req.body.waitSeconds ?? 20))) * 1000;
     for (;;) {
-      const job = await claim(s.db, s.storage, workerId, workerClass, loadedModels.filter((m) => UUID.test(m)));
+      const job = await claim(s.db, s.storage, workerId, workerClass, loadedModels.filter((m) => UUID.test(m)), features);
       if (job || Date.now() >= deadline) return { job };
       await new Promise((r) => setTimeout(r, 500));
     }

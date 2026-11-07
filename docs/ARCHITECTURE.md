@@ -52,6 +52,12 @@ changes.
   inpaint, t2v, morph, zoom, outpaint, upscale, interpolate) are GPU jobs; a GPU worker takes them
   first and CPU jobs when there are none, and CPU workers take GPU jobs only while no GPU worker has
   been seen for a minute (slow, but nothing waits forever). GPU time is billed at the GPU rate.
+* **3D GPU workers** — a GPU worker with the engine's 3D service beside it
+  (`deploy/worker-gpu3d.Dockerfile`: TRELLIS.2 on 127.0.0.1, `NEURACRAFT_3D_URL`). Once the service
+  has loaded its model the worker registers with `features: ["3d"]`. Jobs with an `image_to_3d` step
+  are 3D jobs (`worker_class` `gpu3d`): only such workers take them, before GPU and CPU jobs, and
+  never a CPU worker. A 3D job is refused at submission (`job.no_3d_worker`) when no 3D worker has
+  been seen for ten minutes. Billed at the GPU rate.
 * **Warm models** — a worker keeps the models of its last jobs loaded (`KEEP_MODELS`, default 2),
   their weights resident in GPU memory, and reports them when it asks for work; the scheduler then
   prefers jobs that need those models.
@@ -67,7 +73,7 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
 ```
 
 * A job is one workflow (the engine's JSON) plus the limits of the user's plan.
-* **Claiming**: a worker asks for work naming its class (cpu / gpu, memory, engine version) and the
+* **Claiming**: a worker asks for work naming its class (cpu / gpu, features such as 3d, memory, engine version) and the
   models it has loaded. The scheduler picks, among jobs the worker can run:
   1. higher plan priority first;
   2. users with fewer running jobs first (fairness: nobody fills the pool alone);

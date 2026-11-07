@@ -8,6 +8,8 @@ export interface WorkerCapabilities {
   gpu?: string;
   vramBytes?: number;
   engineVersion: string;
+  // Extra abilities: "3d" = a 3D service is attached (the engine's image_to_3d step works).
+  features?: string[];
 }
 
 export interface WorkerRegisterResponse {

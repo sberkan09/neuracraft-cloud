@@ -9,6 +9,7 @@
 #include "Job.h"
 
 #include "Backend.h"
+#include "ImageTo3D.h"
 #include "Json.h"
 #include "ModelCache.h"
 
@@ -65,6 +66,15 @@ int main() {
                                                       {"memoryBytes", makeNumber(memory)},
                                                       {"engineVersion", makeString(NEURACRAFT_WORKER_ENGINE)}});
     if (nc::currentDevice() == nc::Device::GPU) capsValue.object.push_back({"gpu", makeString(nc::gpuName())});
+    // A 3D service next to a GPU worker (NEURACRAFT_3D_URL, services/trellis2 in the engine): it may take
+    // image_to_3d jobs. Waits for the service's model to load before saying so.
+    if (workerClass == "gpu" && !nc::imageTo3DService().empty()) {
+        for (int i = 0; !stopping && !nc::imageTo3DAvailable(); ++i) {
+            if (i % 12 == 0) std::cerr << "neuracraft-worker: waiting for the 3D service at " << nc::imageTo3DService() << "\n";
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+        }
+        capsValue.object.push_back({"features", nc::json::makeArray({makeString("3d")})});
+    }
     const std::string caps = nc::json::dump(capsValue);
     std::vector<std::string> recentModels;  // model asset ids of the last jobs (likely still loaded)
     while (!stopping && s.workerId.empty()) {

@@ -18,9 +18,11 @@ const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite
 
 // Operations that run diffusion models: these jobs go to GPU workers (when there are any).
 export const GPU_OPS = new Set(["txt2img", "img2img", "inpaint", "t2v", "morph", "zoom", "outpaint", "upscale", "interpolate"]);
+// Steps that need a GPU worker with the 3D service attached (worker class "gpu3d").
+export const GPU3D_OPS = new Set(["image_to_3d"]);
 
 export interface CheckedWorkflow {
-  workerClass: "cpu" | "gpu";
+  workerClass: "cpu" | "gpu" | "gpu3d";
   workflow: { steps: Record<string, unknown>[] } & Record<string, unknown>;
   files: string[]; // asset ids it reads
   models: string[]; // the model assets among them
@@ -81,7 +83,11 @@ export async function checkSubmittedWorkflow(db: Db, userId: string, input: unkn
     }
   }
   return {
-    workerClass: list.some((st) => GPU_OPS.has(String((st as Record<string, unknown>).op))) ? "gpu" : "cpu",
+    workerClass: list.some((st) => GPU3D_OPS.has(String((st as Record<string, unknown>).op)))
+      ? "gpu3d"
+      : list.some((st) => GPU_OPS.has(String((st as Record<string, unknown>).op)))
+        ? "gpu"
+        : "cpu",
     workflow: wf as CheckedWorkflow["workflow"],
     files: ids,
     models: ids.filter((id) => refs.get(id) === "model"),
