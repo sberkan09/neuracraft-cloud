@@ -88,8 +88,12 @@ jobs:
           build() {  # image, then docker build arguments
             local image=$OWNER/$1; shift
             docker build $SRC -t "$image:${{ github.sha }}" -t "$image:latest" "$@" .
-            docker push "$image:${{ github.sha }}"
-            docker push "$image:latest"
+            push "$image:${{ github.sha }}"
+            push "$image:latest"
+          }
+          push() {  # GHCR sometimes answers "denied" right after creating a package: retry
+            for i in 1 2 3 4; do docker push "$1" && return 0; sleep $((i * 15)); done
+            return 1
           }
           build neuracraft-cloud-api -f deploy/api.Dockerfile --target api
           build neuracraft-cloud-web -f deploy/api.Dockerfile --target web
