@@ -45,7 +45,8 @@ fi
 stamp "api"
 npm ci --no-audit --no-fund > /dev/null 2>&1 && npm run build > /dev/null 2>&1 || { echo "npm build failed"; sleep infinity; }
 service postgresql start > /dev/null
-su postgres -c "psql -qc \"CREATE USER nc SUPERUSER PASSWORD 'nc'\"" ; su postgres -c "createdb -O nc neuracraft"
+su postgres -c "psql -qc \"CREATE USER nc SUPERUSER PASSWORD 'nc'\"" 2> /dev/null
+su postgres -c "dropdb --if-exists neuracraft" && su postgres -c "createdb -O nc neuracraft"   # a restarted pod starts over
 export DATABASE_URL=postgres://nc:nc@127.0.0.1:5432/neuracraft STORAGE_DIR=/data/storage WORKER_TOKENS=gpu-check SIGNUP_CREDITS=100000000 PORT=8080
 node apps/api/dist/src/main.js > /tmp/api.log 2>&1 &
 until curl -sf localhost:8080/v1/health > /dev/null; do sleep 1; done
@@ -56,6 +57,7 @@ MODELS_DIR=$V/models IN_CONTAINER=$V/models ADD="node apps/api/dist/src/cli/add-
 stamp "fill the volume's model cache with one job"
 env API_URL=http://127.0.0.1:8080 WORKER_TOKEN=gpu-check WORKER_CLASS=gpu ONCE=1 CACHE_DIR=$V/cache WORK_DIR=/tmp/jobs $V/bin/neuracraft-worker > /tmp/fill.log 2>&1 &
 FILL=$!
+until [ -n "$(psql "$DATABASE_URL" -Atc "SELECT id FROM workers WHERE class = 'gpu' LIMIT 1")" ]; do sleep 0.5; done
 cat > /tmp/job.mjs <<'JS'
 // Signs up, submits a map job, waits for it; prints the job's timings from the database.
 import pg from "pg";
@@ -83,12 +85,16 @@ cp /tmp/job.mjs apps/api/job.mjs
 wait $FILL
 du -sh $V/cache | sed 's/^/  cache on the volume: /'
 psql "$DATABASE_URL" -qc "UPDATE workers SET last_seen_at = now() - interval '1 hour'"
-SINCE=$(psql "$DATABASE_URL" -Atc "SELECT now()")
-stamp "READY: start the worker pod now"
-until [ -n "$(psql "$DATABASE_URL" -Atc "SELECT id FROM workers WHERE class = 'gpu' AND registered_at > '$SINCE' LIMIT 1")" ]; do sleep 0.5; done
-stamp "a new GPU worker registered"
-(cd apps/api && node job.mjs)
-stamp "second job (warm)"
-(cd apps/api && node job.mjs)
-stamp "done"
+# Every worker pod started from now on is measured: registration, its first job, a second (warm) one.
+while :; do
+    SINCE=$(psql "$DATABASE_URL" -Atc "SELECT now()")
+    stamp "READY: start the worker pod now"
+    until [ -n "$(psql "$DATABASE_URL" -Atc "SELECT id FROM workers WHERE class = 'gpu' AND registered_at > '$SINCE' LIMIT 1")" ]; do sleep 0.5; done
+    stamp "a new GPU worker registered"
+    (cd apps/api && node job.mjs)
+    stamp "second job (warm)"
+    (cd apps/api && node job.mjs)
+    stamp "done; stop that worker pod"
+    psql "$DATABASE_URL" -qc "UPDATE workers SET last_seen_at = now() - interval '1 hour'"
+done
 sleep infinity
