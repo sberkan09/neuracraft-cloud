@@ -10,6 +10,7 @@ export interface Config {
   storage: { kind: "local"; dir: string } | { kind: "s3"; bucket: string; region: string; endpoint?: string };
   signingKey: Buffer; // signs local-storage URLs
   workerTokens: string[];
+  adminTokens: string[]; // operator endpoints (routes/admin.ts)
   sessionDays: number;
   secureCookies: boolean;
   migrationsDir: string;
@@ -42,7 +43,8 @@ export interface CapacityConfig {
   startTimeoutSeconds: number; // a pod whose worker has not registered by then is given up
   expectedStartSeconds: number; // what apps are told to expect while a pod starts
   maxPodHours: number; // a pod is replaced after this long
-  dailyBudgetUsd: number; // no new pods once today's pods cost this much
+  dailyBudgetUsd: number; // no GPU pods once today's pods cost this much (UTC days)
+  monthlyBudgetUsd: number; // the same for the month (Infinity: no limit)
   runpod: {
     apiKey: string;
     url: string;
@@ -72,6 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : { kind: "local", dir: path.resolve(env.STORAGE_DIR ?? ".data/storage") },
     signingKey: env.SIGNING_KEY ? Buffer.from(env.SIGNING_KEY, "hex") : randomBytes(32),
     workerTokens: (env.WORKER_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean),
+    adminTokens: (env.ADMIN_TOKENS ?? "").split(",").map((t) => t.trim()).filter((t) => t.length >= 16),
     sessionDays: Number(env.SESSION_DAYS ?? 30),
     secureCookies: env.SECURE_COOKIES === "1",
     migrationsDir: path.resolve(env.MIGRATIONS_DIR ?? new URL("../../../../db/migrations", import.meta.url).pathname),
@@ -101,6 +104,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       expectedStartSeconds: Number(env.CAPACITY_EXPECTED_START_SECONDS ?? 90),
       maxPodHours: Number(env.CAPACITY_MAX_POD_HOURS ?? 12),
       dailyBudgetUsd: Number(env.CAPACITY_DAILY_BUDGET_USD ?? 10),
+      monthlyBudgetUsd: env.CAPACITY_MONTHLY_BUDGET_USD ? Number(env.CAPACITY_MONTHLY_BUDGET_USD) : Infinity,
       runpod: {
         apiKey: env.RUNPOD_API_KEY ?? "",
         url: env.RUNPOD_API_URL || "https://api.runpod.io",

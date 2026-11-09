@@ -38,6 +38,12 @@ storage URLs.
   The partner's server can call it, or the app for its own end user, for example from a "delete my
   data" button. Running jobs are cancelled. A second call finds nothing.
 
+## Usage log
+
+The usage log ([USAGE_LOG.md](USAGE_LOG.md)) counts jobs, GPU time and cost to plan capacity and prices. It holds
+no narratives, prompts, pictures, accounts or end-user ids (a session is a random id), so it is kept
+after the data it describes is deleted.
+
 ## Where
 
 These are the production choices (`docs/ARCHITECTURE.md`, deployment milestone). This table changes

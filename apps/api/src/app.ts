@@ -11,6 +11,7 @@ import { presetRoutes } from "./routes/presets.js";
 import { reportRoutes } from "./routes/reports.js";
 import { partnerRoutes } from "./routes/partner.js";
 import { sessionRoutes } from "./routes/sessions.js";
+import { adminRoutes } from "./routes/admin.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { storageRoutes } from "./routes/storage.js";
 import { workerRoutes } from "./routes/worker.js";
@@ -79,6 +80,7 @@ export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Pr
   await reportRoutes(app, s);
   await partnerRoutes(app, s);
   await sessionRoutes(app, s);
+  await adminRoutes(app, s);
   await tokenRoutes(app, s);
   await workerRoutes(app, s);
   await storageRoutes(app, s);

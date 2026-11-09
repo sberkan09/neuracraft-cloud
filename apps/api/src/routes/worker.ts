@@ -15,7 +15,7 @@ import { OUTPUT_FILE } from "../workflow.js";
 import { MODERATION_FILE, reportHeld, type Verdict } from "../moderation.js";
 import { blobKey } from "../storage.js";
 import { outputExpiry } from "../retention.js";
-import { podWorkerRegistered } from "../capacity.js";
+import { podWorkerRegistered, workerWarmed } from "../capacity.js";
 import { warmupJobs } from "../warmup.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -83,8 +83,8 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     authorize(req);
     const { workerId, loadedModels = [] } = req.body ?? ({} as WorkerClaimRequest);
     if (!UUID.test(String(workerId))) fail(400, "request.invalid");
-    const w = await s.db.query<{ class: string; capabilities: WorkerCapabilities; draining: boolean }>(
-      "UPDATE workers SET last_seen_at = now(), loaded = $2, warming = false WHERE id = $1 RETURNING class, capabilities, draining",
+    const w = await s.db.query<{ class: string; capabilities: WorkerCapabilities; draining: boolean; warming: boolean }>(
+      "UPDATE workers SET last_seen_at = now(), loaded = $2 WHERE id = $1 RETURNING class, capabilities, draining, warming",
       [
       workerId,
         loadedModels.filter((m) => UUID.test(m)),
@@ -92,6 +92,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     );
     const workerClass = w.rows[0]?.class ?? fail(401, "worker.unauthorized");
     if (w.rows[0]!.draining) return { job: null, stop: true };  // its pod is being given back
+    if (w.rows[0]!.warming) await workerWarmed(s.db, workerId);  // its warm-up is over
     const features = Array.isArray(w.rows[0]?.capabilities?.features) ? w.rows[0]!.capabilities.features!.map(String) : [];
     const region = typeof w.rows[0]?.capabilities?.region === "string" ? w.rows[0]!.capabilities.region : "";
     const interactiveOnly = w.rows[0]?.capabilities?.interactiveOnly === true;

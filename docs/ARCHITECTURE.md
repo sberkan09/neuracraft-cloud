@@ -132,6 +132,9 @@ changes.
     at least ~45 s after the session opens.
   - **Without `CAPACITY_PROVIDER`**: sessions still work, but GPU workers are started by hand.
   - How GM Cebi uses sessions and the sketch_to_scene preset: [docs/partners/gm-cebi.md](partners/gm-cebi.md).
+  - **Budgets**: `CAPACITY_DAILY_BUDGET_USD` and `CAPACITY_MONTHLY_BUDGET_USD` (UTC days and months). Once
+    one is reached, no pod is rented and the pods there are drained; sessions answer `unavailable`.
+  - Everything the capacity manager does goes to the usage log ([USAGE_LOG.md](USAGE_LOG.md)).
   Workers are cattle: any can die at any moment.
 
 ## Jobs

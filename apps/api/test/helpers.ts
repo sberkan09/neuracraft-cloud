@@ -13,6 +13,7 @@ import { JobEvents } from "../src/events.js";
 import { LocalStorage } from "../src/storage.js";
 
 export const WORKER_TOKEN = "test-worker-token";
+export const ADMIN_TOKEN = "test-admin-token-0123456789";
 
 export interface Harness {
   app: FastifyInstance;
@@ -30,7 +31,7 @@ export async function harness(): Promise<Harness> {
   const url = new URL(server);
   url.pathname = `/${name}`;
   const dir = await mkdtemp(path.join(tmpdir(), "nc-storage-"));
-  const config = loadConfig({ DATABASE_URL: url.toString(), STORAGE_DIR: dir, WORKER_TOKENS: WORKER_TOKEN, SIGNUP_CREDITS: "50000" });
+  const config = loadConfig({ DATABASE_URL: url.toString(), STORAGE_DIR: dir, WORKER_TOKENS: WORKER_TOKEN, ADMIN_TOKENS: ADMIN_TOKEN, SIGNUP_CREDITS: "50000" });
   const db = connect(config.databaseUrl);
   await migrate(db, config.migrationsDir);
   const events = new JobEvents(config.databaseUrl);
