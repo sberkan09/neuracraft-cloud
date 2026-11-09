@@ -1018,7 +1018,8 @@ describe("interactive jobs", () => {
 
   it("records where each job's time went and gives operators percentiles per preset and mode", async () => {
     const { latencyStats } = await import("../src/latency.js");
-    const since = new Date(Date.now() - 1000);
+    // The database clock, so jobs earlier tests finished just before are not counted.
+    const since = (await h.s.db.query<{ t: Date }>("SELECT now() AS t")).rows[0]!.t;
     const a = await signUp(h.app);
     for (const run of [1, 2, 3])
       await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.01) }, PNG_1x1, { fetchSeconds: 0.1, loadSeconds: run === 1 ? 40 : 0, runSeconds: run, uploadSeconds: 0.05, bogus: 9 });
