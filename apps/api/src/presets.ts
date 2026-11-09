@@ -93,6 +93,8 @@ const sketchToScene: Preset = {
       height: 512,
       controlnet: asset(m["controlnet-scribble"]!),
       control: "lines",
+      // 0.9: rough sketches (a wobbly road, a dungeon's walls) lose their layout below ~0.75, and what a
+      // stroke becomes is decided by the words (prompts.ts, map mode; issue #42), not by a weaker control.
       control_scale: 0.9,
       tiny_vae: asset(m.taesd!),
       out: "scene",

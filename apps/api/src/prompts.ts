@@ -7,7 +7,7 @@
 //
 // Both texts go through the text filter before anything is reserved.
 
-export const PROMPT_INSTRUCTIONS_VERSION = "sketch_to_scene/1";
+export const PROMPT_INSTRUCTIONS_VERSION = "sketch_to_scene/2";
 
 export type SceneMode = "map" | "atmosphere";
 export interface WrittenPrompt {
@@ -22,10 +22,11 @@ export interface PromptWriter {
 }
 
 export const STYLE: Record<SceneMode, { lead: string; tail: string; negative: string }> = {
+  // Map mode (issue #42): seen from directly above, evenly lit, so tokens and the app's grid sit on it.
   map: {
-    lead: "top-down fantasy battle map",
-    tail: "tabletop RPG map, detailed painted texture",
-    negative: "perspective view, horizon, sky, people, creatures, text, letters, grid numbers, blurry, frame",
+    lead: "top-down tabletop RPG battle map, bird's eye view from directly above, orthographic, flat even daylight",
+    tail: "clear readable terrain, detailed painted texture",
+    negative: "perspective, isometric, side view, horizon, sky, very dark, vignette, heavy shadows, people, creatures, text, letters, grid, frame, border, blurry",
   },
   atmosphere: {
     lead: "fantasy landscape illustration",
@@ -59,10 +60,34 @@ const TERRAIN: [string, string, boolean?][] = [
   ["uçurum", "a cliff edge"], ["mağara", "a cave entrance"], ["kale", "a castle"], ["sur", "stone castle walls", true],
   ["surlar", "stone castle walls"], ["kule", "round towers"], ["köy", "a small village"], ["ev", "houses", true], ["evler", "houses", true],
   ["tapınak", "a temple"], ["harabe", "ancient ruins"], ["yıkıntı", "ruins"], ["mezarlı", "a graveyard"], ["ateş", "a campfire"],
-  ["meşale", "torch light"], ["kum", "sand"], ["çöl", "a desert"], ["liman", "a harbour with docks"], ["iskele", "a wooden pier"],
+  ["meşale", "torch light"], ["kum", "sand"], ["çöl", "a desert"], ["liman", "a harbour with docks"], ["iskele", "a wooden pier", true], ["iskeleye", "a wooden pier", true], ["iskelede", "a wooden pier", true],
   ["river", "a river"], ["bridge", "a bridge"], ["forest", "a dense forest"], ["tavern", "a medieval tavern interior"],
   ["dungeon", "a stone dungeon"], ["cave", "a cave entrance"], ["castle", "a castle"], ["road", "a dirt road"], ["village", "a small village"],
 ];
+
+// How the template's phrases read on a map seen from above (scribbles alone do not say what a circle
+// or two wavy lines are: ControlNet keeps the shapes, the words name them; issue #42).
+const FROM_ABOVE: Record<string, string> = {
+  "wooden planks": "", // ("ahşap", wooden): the bridge says it; alone it drew walkways along the banks
+  "a river": "a narrow blue river of flowing water between two grassy banks",
+  "a small stream": "a narrow blue stream",
+  "a lake": "a blue lake",
+  "the sea shore": "blue sea water along a sandy shore",
+  "a bridge": "a short wooden plank bridge crossing the water",
+  "a dense forest": "round green tree canopies of a dense forest seen from above",
+  "trees": "round green tree canopies seen from above",
+  "pine trees": "dark green pine tree tops seen from above",
+  "bushes": "round green bushes seen from above",
+  "a dirt road": "a brown dirt road",
+  "a footpath": "a narrow dirt footpath",
+  "houses": "house roofs seen from above",
+  "a small village": "village house roofs seen from above",
+  "large boulders": "grey boulders seen from above",
+  "a castle": "castle walls and towers seen from above",
+  "round towers": "round tower tops seen from above",
+  "stone castle walls": "thick stone castle walls seen from above",
+  "a stone dungeon": "a stone dungeon seen from above, grey stone floor tiles, thick walls",
+};
 
 const words = (s: string) => s.toLocaleLowerCase("tr").split(/[^\p{L}]+/u).filter(Boolean);
 
@@ -77,22 +102,28 @@ export function withoutCreatures(prompt: string): string {
     .join(", ");
 }
 
-// The mode's style words around the prompt (added when missing), at most ~60 words (under 75 CLIP tokens).
+// The mode's style words around the prompt (added when missing), at most ~60 words (under 75 CLIP
+// tokens): the scene's own words are cut, never the style words.
 export function styled(body: string, mode: SceneMode): string {
   const st = STYLE[mode];
+  const has = (p: string, part: string) => p.toLowerCase().includes(part.toLowerCase());
   let p = withoutCreatures(body);
-  if (!p.toLowerCase().includes(st.lead)) p = `${st.lead}, ${p}`;
-  if (!p.toLowerCase().includes(st.tail.split(",")[0]!.toLowerCase())) p = `${p}, ${st.tail}`;
-  const ws = p.split(/\s+/);
-  return (ws.length > 60 ? ws.slice(0, 60).join(" ") : p).slice(0, 400).replace(/[,\s]+$/, "");
+  const lead = has(p, st.lead) ? "" : st.lead;
+  const tail = has(p, st.tail.split(",")[0]!) ? "" : st.tail;
+  const budget = 60 - (lead ? lead.split(/\s+/).length : 0) - (tail ? tail.split(/\s+/).length : 0);
+  const ws = p.split(/\s+/).filter(Boolean);
+  if (ws.length > budget) p = ws.slice(0, budget).join(" ");
+  p = p.slice(0, 400 - lead.length - tail.length - 4).replace(/[,\s]+$/, ""); // the prompt param's 400 characters
+  return [lead, p, tail].filter(Boolean).join(", ");
 }
 
 export function templatePrompt(narrative: string, mode: SceneMode, reason?: string): WrittenPrompt {
   const found: string[] = [];
   for (const w of words(narrative))
     for (const [key, phrase, exact] of TERRAIN)
-      if ((exact ? w === key : w.startsWith(key)) && !found.includes(phrase)) {
-        found.push(phrase);
+      if (exact ? w === key : w.startsWith(key)) {
+        const p = mode === "map" ? (FROM_ABOVE[phrase] ?? phrase) : phrase;
+        if (p && !found.includes(p)) found.push(p);
         break;
       }
   const body = found.length ? found.join(", ") : "open terrain, grass and rocks";
@@ -103,7 +134,12 @@ const INSTRUCTIONS = (mode: SceneMode) => `You turn a game master's short narrat
 Rules:
 - Describe only the terrain, the setting, objects, light and weather. Never mention creatures, people, monsters, heroes or any being: they are tokens drawn on top by the app. Leave out names and game numbers.
 - English only, comma-separated phrases, under 60 words.
-- Start with "${STYLE[mode].lead}" and end with "${STYLE[mode].tail}".
+- Start with "${STYLE[mode].lead}" and end with "${STYLE[mode].tail}".${
+  mode === "map"
+    ? `
+- Everything is seen from directly above, like a battle map under the tokens: trees as round green canopies, water as blue water between its banks, roofs rather than house walls, a bridge as wooden planks crossing the water. Never a horizon, the sky or a side view.`
+    : ""
+}
 - If the narration asks for sexual, hateful or otherwise disallowed content, describe a neutral version of the place only.
 Answer with JSON only: {"prompt": "...", "negative": "..."} where negative lists what to avoid (include "${STYLE[mode].negative}").`;
 

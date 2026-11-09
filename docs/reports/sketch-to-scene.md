@@ -111,6 +111,24 @@ Next steps:
 - move the classifier to the GPU;
 - wake workers on new jobs instead of every 500 ms (the queue's 0.1–0.4 s).
 
+### By GPU type (issue #43)
+
+Measured on Runpod Secure Cloud, `mode: map` unless noted:
+
+| GPU | Where | Warm map | Warm atmosphere | Cold start |
+|---|---|---|---|---|
+| RTX 4090 | EU-RO-1, gpu-check (models on local disk) | 2.5 s | 4.3–4.6 s | first job 35 s |
+| RTX 4090 | EU-RO-1, a session's pod with the network volume ([session-cold-start.md](session-cold-start.md)) | 3.2 s | — | worker up after 15 s; first job 29.5 s without warm-up (models loaded from the volume, 25 s) |
+| RTX 4090 | EUR-IS-2, production, a fallback data centre without the volume (2026-11-09) | 4.6 s (the first real job) | — | ready after 96 s: worker up after 6 s, warm-up 77 s (models downloaded from the server, 63 s) |
+| RTX PRO 4500 Blackwell | EU-CZ-1, gpu-check | 4.0–4.4 s | 9.4 s | first job 34 s |
+| RTX A5000, RTX A4000, A40, RTX 2000 Ada | — | not measured | — | none was free in Europe or overall on 2026-11-09 |
+
+**The estimate sessions are told** (`capacity.etaSeconds`) covers the warm-up:
+- `CAPACITY_EXPECTED_START_SECONDS` (75 s) for a pod with the model cache;
+- `CAPACITY_EXPECTED_START_SECONDS_NO_CACHE` (120 s) for one without it.
+
+`capacity.gpu` and `job.gpu` say which GPU it was.
+
 ## Warm capacity: the decision
 
 **Choice**: keep **one GPU worker warm, kept for interactive jobs**, during the hours GM Cebi is
