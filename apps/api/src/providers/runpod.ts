@@ -4,7 +4,8 @@
 // A pod runs the GPU worker image (deploy/worker-gpu.Dockerfile, RUNPOD_IMAGE) and registers with
 // this API (RUNPOD_WORKER_API_URL) as an interactive-only GPU worker. With RUNPOD_NETWORK_VOLUME_ID
 // the worker's model cache lives on that volume, shared by every pod, so a new pod skips downloading
-// the models (the volume pins the data center).
+// the models (the volume pins the data center). When none of the GPU types is free there, the pod
+// goes to one of RUNPOD_FALLBACK_DATA_CENTERS without the volume (its worker downloads the models).
 import type { CapacityConfig } from "../config.js";
 import { CapacityUnavailable, POD_PREFIX, type GpuProvider, type PodSpec, type ProviderPod, type RentedPod } from "../capacity.js";
 
@@ -46,33 +47,39 @@ export class RunpodProvider implements GpuProvider {
       WORKER_CLASS: "gpu",
       WORKER_POD_ID: spec.id,
     };
-    if (this.cfg.networkVolumeId) env.CACHE_DIR ??= "/runpod-volume/cache";
-    let lastCapacityError = "";
-    for (const gpu of this.cfg.gpuTypes) {
-      const body: Record<string, unknown> = {
-        name: spec.name,
-        image: this.cfg.image,
-        cloud: this.cfg.cloud,
-        gpu: { id: gpu, count: 1 },
-        disk: 30,
-        env,
-      };
-      if (this.cfg.registryAuthId) body.registry = this.cfg.registryAuthId;
-      if (this.cfg.dataCenters.length) body.dataCenterIds = this.cfg.dataCenters;
-      if (this.cfg.networkVolumeId) body.mounts = { network: [{ volumeId: this.cfg.networkVolumeId, path: "/runpod-volume" }] };
-      const r = await this.call("POST", "/v2/pods", body);
-      if (r.status === 201 || r.status === 200) {
-        return { providerId: String(r.json.id), gpuType: gpu, region: r.json.dataCenterId ?? null, pricePerHour: Number(r.json.cost ?? 0) };
+    // Where to try, in order: the volume's data centres with the volume, then the fallback ones without.
+    const volume = this.cfg.networkVolumeId;
+    const attempts: { dataCenters: string[]; volume: boolean }[] = volume
+      ? [{ dataCenters: this.cfg.dataCenters, volume: true }, ...(this.cfg.fallbackDataCenters.length ? [{ dataCenters: this.cfg.fallbackDataCenters, volume: false }] : [])]
+      : [{ dataCenters: [...this.cfg.dataCenters, ...this.cfg.fallbackDataCenters], volume: false }];
+    const tried: string[] = [];
+    for (const at of attempts) {
+      for (const gpu of this.cfg.gpuTypes) {
+        const body: Record<string, unknown> = {
+          name: spec.name,
+          image: this.cfg.image,
+          cloud: this.cfg.cloud,
+          gpu: { id: gpu, count: 1 },
+          disk: 30,
+          env: at.volume ? { CACHE_DIR: "/runpod-volume/cache", ...env } : env,
+        };
+        if (this.cfg.registryAuthId) body.registry = this.cfg.registryAuthId;
+        if (at.dataCenters.length) body.dataCenterIds = at.dataCenters;
+        if (at.volume) body.mounts = { network: [{ volumeId: volume, path: "/runpod-volume" }] };
+        const r = await this.call("POST", "/v2/pods", body);
+        if (r.status === 201 || r.status === 200) {
+          return { providerId: String(r.json.id), gpuType: gpu, region: r.json.dataCenterId ?? null, pricePerHour: Number(r.json.cost ?? 0) };
+        }
+        const detail = String(r.json?.detail ?? r.json?.title ?? r.status);
+        // No machine with this GPU there right now: try the next kind (then the next data centres).
+        if (r.status === 400 && /no longer any instances|not enough free|no available|capacity/i.test(detail + String(r.json?.hint ?? ""))) {
+          tried.push(`${gpu} in ${at.dataCenters.join("/") || "any data centre"}`);
+          continue;
+        }
+        throw new Error(`runpod: creating a pod failed (${r.status}): ${detail}`);
       }
-      const detail = String(r.json?.detail ?? r.json?.title ?? r.status);
-      // No machine with this GPU right now: try the next kind.
-      if (r.status === 400 && /no longer any instances|not enough free|no available|capacity/i.test(detail + String(r.json?.hint ?? ""))) {
-        lastCapacityError = `${gpu}: ${detail}`;
-        continue;
-      }
-      throw new Error(`runpod: creating a pod failed (${r.status}): ${detail}`);
     }
-    throw new CapacityUnavailable(`runpod: no GPU available (${lastCapacityError || this.cfg.gpuTypes.join(", ")})`);
+    throw new CapacityUnavailable(`runpod: no GPU free (tried ${tried.join("; ")})`);
   }
 
   async terminate(providerId: string): Promise<void> {

@@ -54,6 +54,7 @@ export interface CapacityConfig {
     gpuTypes: string[]; // tried in order
     cloud: "SECURE" | "COMMUNITY";
     dataCenters: string[];
+    fallbackDataCenters: string[]; // tried without the network volume when dataCenters have no free GPU
     networkVolumeId: string; // the models cache, shared by the pods (mounted at /runpod-volume)
     workerApiUrl: string; // how the pods reach this API
     workerToken: string;
@@ -115,6 +116,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         gpuTypes: (env.RUNPOD_GPU_TYPES || "NVIDIA RTX A5000,NVIDIA RTX A4000,NVIDIA GeForce RTX 4090").split(",").map((x) => x.trim()).filter(Boolean),
         cloud: env.RUNPOD_CLOUD === "COMMUNITY" ? "COMMUNITY" : "SECURE",
         dataCenters: (env.RUNPOD_DATA_CENTERS ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+        fallbackDataCenters: (env.RUNPOD_FALLBACK_DATA_CENTERS ?? "").split(",").map((x) => x.trim()).filter(Boolean),
         networkVolumeId: env.RUNPOD_NETWORK_VOLUME_ID ?? "",
         workerApiUrl: env.RUNPOD_WORKER_API_URL || env.STORAGE_URL_PREFIX || "",
         workerToken: env.RUNPOD_WORKER_TOKEN ?? (env.WORKER_TOKENS ?? "").split(",")[0] ?? "",
