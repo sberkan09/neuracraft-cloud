@@ -235,7 +235,7 @@ std::string errorCode(const std::exception& e) {
     return "job.failed";
 }
 
-void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
+void runJob(const Http& api, const WorkerSettings& s, const Value& job, bool warmup) {
     const std::string jobId = str(job, "jobId");
     // Under the worker's own folder: a job whose lease ran out may be running on another worker too.
     const fs::path dir = ownFolder(s.workDir, s) / safeName(jobId);
@@ -262,7 +262,9 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
     std::condition_variable wake;
     Value progress;
     bool fresh = false;
-    std::thread beat([&] {
+    // (A warm-up job is the worker's own: no lease, nothing reported.)
+    std::thread beat;
+    if (!warmup) beat = std::thread([&] {
         std::unique_lock<std::mutex> lock(mutex);
         while (!done) {
             wake.wait_for(lock, std::chrono::duration<double>(s.heartbeatSeconds));
@@ -290,7 +292,7 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
             done = true;
         }
         wake.notify_all();
-        beat.join();
+        if (beat.joinable()) beat.join();
         std::error_code ec;
         fs::remove_all(dir, ec);
         for (const fs::path& p : transient) fs::remove_all(p, ec);
@@ -375,6 +377,13 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
         loadBefore = nc::modelLoadSeconds();
         const auto clips = nc::runWorkflow(text, dir.string(), events, nullptr, limits);
         runEnd = seconds();
+        if (warmup) {
+            const Value spent = timings();
+            finish();
+            std::cerr << "worker: warm-up " << jobId << " done in " << seconds() << " s " << nc::json::dump(spent) << "\n";
+            locks.release();
+            return;
+        }
 
         // Without a save step, the last clip made is the result.
         std::vector<fs::path> outputs;
@@ -429,6 +438,11 @@ void runJob(const Http& api, const WorkerSettings& s, const Value& job) {
         const Value spent = timings();
         const std::string code = errorCode(e);
         finish();
+        if (warmup) {
+            std::cerr << "worker: warm-up " << jobId << " failed (" << code << "): " << e.what() << "\n";
+            locks.release();
+            return;
+        }
         report(api, "/v1/worker/jobs/" + jobId + "/fail",
                nc::json::makeObject({{"workerId", nc::json::makeString(s.workerId)},
                                      {"code", nc::json::makeString(code)},

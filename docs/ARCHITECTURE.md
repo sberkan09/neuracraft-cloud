@@ -109,7 +109,7 @@ changes.
     - **Renting**: pods are rented through the provider (Runpod REST API v2: `RUNPOD_GPU_TYPES`
       tried in order, `RUNPOD_DATA_CENTERS`, the worker image `RUNPOD_IMAGE`). Pod workers register
       with `WORKER_POD_ID` and the settings in `RUNPOD_WORKER_ENV` (`INTERACTIVE_ONLY=1`,
-      `KEEP_MODELS=8`). With `RUNPOD_NETWORK_VOLUME_ID`, their model cache lives on a shared network
+      `KEEP_MODELS=8`, `WARMUP=1`). With `RUNPOD_NETWORK_VOLUME_ID`, their model cache lives on a shared network
       volume, so a new pod does not download the models again.
     - **Giving back**: after the last demand, pods stay `CAPACITY_GRACE_MINUTES` (15). Then they drain:
       the worker takes no more jobs and is told to stop, and the pod is deleted once it is idle.
@@ -119,8 +119,17 @@ changes.
       of are deleted.
     - **Budget**: no new pods once today's pods have cost `CAPACITY_DAILY_BUDGET_USD`; sessions then
       answer `unavailable`.
+  - **Warm-up** (`apps/api/src/warmup.ts`, `WARMUP=1` in `RUNPOD_WORKER_ENV`): a new pod's worker
+    first runs each interactive preset once on a blank sketch, for itself (`POST /v1/worker/warmup`;
+    no lease, nothing stored or charged). It counts as ready only from its first claim, so sessions
+    say `warming` until the models are loaded.
   - **While a pod starts**: interactive jobs are accepted and wait for it, instead of
     `job.no_gpu_worker`.
+  - **Measured** (RTX 4090, Runpod EU-RO-1, models on a network volume;
+    [docs/reports/session-cold-start.md](reports/session-cold-start.md)): from renting a pod to its
+    worker registering, 15 s when the host has the image; loading the models from the volume, 25 s.
+    Without the warm-up, a game's first picture takes ~30 s; with it ~3 s, if the first sketch comes
+    at least ~45 s after the session opens.
   - **Without `CAPACITY_PROVIDER`**: sessions still work, but GPU workers are started by hand.
   Workers are cattle: any can die at any moment.
 

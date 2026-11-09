@@ -47,7 +47,7 @@ const WORKER_GRACE_SECONDS = 180; // a running pod's worker unseen this long is 
 // What a session (or a submission) can expect right now, for interactive jobs in `regions`.
 export async function capacityState(db: Db, cfg: CapacityConfig, regions: string[], graceSeconds: number, manager?: CapacityManager): Promise<CapacityState> {
   const ready = await db.query(
-    `SELECT 1 FROM workers WHERE class = 'gpu' AND NOT draining AND last_seen_at > now() - make_interval(secs => $2)
+    `SELECT 1 FROM workers WHERE class = 'gpu' AND NOT draining AND NOT warming AND last_seen_at > now() - make_interval(secs => $2)
        AND (cardinality($1::text[]) = 0 OR capabilities ->> 'region' = ANY($1::text[])) LIMIT 1`,
     [regions, graceSeconds],
   );

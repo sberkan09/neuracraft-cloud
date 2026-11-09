@@ -54,7 +54,7 @@ export interface CapacityConfig {
     networkVolumeId: string; // the models cache, shared by the pods (mounted at /runpod-volume)
     workerApiUrl: string; // how the pods reach this API
     workerToken: string;
-    workerEnv: Record<string, string>; // anything else for the worker (KEEP_MODELS=8, WORKER_REGION=eu, ...)
+    workerEnv: Record<string, string>; // anything else for the worker (KEEP_MODELS=8, WARMUP=1, WORKER_REGION=eu, ...)
   };
 }
 
@@ -113,7 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         workerApiUrl: env.RUNPOD_WORKER_API_URL || env.STORAGE_URL_PREFIX || "",
         workerToken: env.RUNPOD_WORKER_TOKEN ?? (env.WORKER_TOKENS ?? "").split(",")[0] ?? "",
         workerEnv: Object.fromEntries(
-          (env.RUNPOD_WORKER_ENV || "KEEP_MODELS=8,INTERACTIVE_ONLY=1")
+          (env.RUNPOD_WORKER_ENV || "KEEP_MODELS=8,INTERACTIVE_ONLY=1,WARMUP=1")
             .split(",")
             .map((kv) => kv.split("=").map((x) => x.trim()))
             .filter((kv) => kv.length === 2 && kv[0]),

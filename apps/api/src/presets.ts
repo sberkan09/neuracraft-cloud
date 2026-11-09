@@ -41,6 +41,8 @@ export interface Preset {
   // Parameters of an older version -> the current one (absent: only the current version).
   upgrade?(params: Record<string, unknown>, from: number): Record<string, unknown>;
   oldestVersion?: number;
+  // Parameters of the job a starting GPU worker runs on a blank input to load the models (warmup.ts).
+  warmup?: Record<string, unknown>;
 }
 
 const asset = (id: string) => `asset:${id}`;
@@ -76,6 +78,7 @@ const sketchToScene: Preset = {
         ? { field: "narrative", reason: "give prompt or narrative, not both" }
         : null,
   maxSeconds: (p) => (p.mode === "atmosphere" ? 60 : 30),
+  warmup: { mode: "map", prompt: "an empty field", seed: 1 },  // map uses every model (atmosphere: all but the LoRA)
   workflow(p, inputs, m) {
     const map = p.mode === "map";
     const seed = typeof p.seed === "number" ? p.seed : Math.floor(Math.random() * 4294967296);

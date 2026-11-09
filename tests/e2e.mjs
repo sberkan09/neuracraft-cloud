@@ -229,7 +229,17 @@ try {
     for (const params of [{ mode: "map", narrative: "Nehrin üzerinde ahşap bir köprü", seed: 1 }, { mode: "atmosphere", prompt: "a misty forest river", seed: 2 }]) {
       const sub = await call("POST", "/v1/presets/sketch_to_scene/jobs", { params, inputs: { sketch } });
       assert.equal(sub.status, 201, JSON.stringify(sub.body));
-      assert.equal(await runWorker(), 0);
+      if (params.mode === "map") {
+        // A starting worker with WARMUP=1 (a session's pod) first runs the preset on a blank sketch for itself.
+        let log = "";
+        const w = spawn(workerBin, [], {
+          env: { ...process.env, API_URL: api, WORKER_TOKEN: token, ONCE: "1", WARMUP: "1", CACHE_DIR: path.join(data, "cache"), WORK_DIR: path.join(data, "jobs") },
+          stdio: ["ignore", "inherit", "pipe"],
+        });
+        w.stderr.on("data", (d) => { log += d; process.stderr.write(d); });
+        assert.equal(await new Promise((r) => w.on("exit", r)), 0);
+        assert.match(log, /warm-up warmup-sketch_to_scene done/);
+      } else assert.equal(await runWorker(), 0);
       const done = (await call("GET", `/v1/jobs/${sub.body.job.id}`)).body.job;
       assert.equal(done.state, "succeeded", JSON.stringify(done));
       assert.deepEqual(done.outputs.map((o) => o.name), ["scene.png"]);  // the classifier's scores are not an output

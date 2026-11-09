@@ -16,6 +16,7 @@ import { MODERATION_FILE, reportHeld, type Verdict } from "../moderation.js";
 import { blobKey } from "../storage.js";
 import { outputExpiry } from "../retention.js";
 import { podWorkerRegistered } from "../capacity.js";
+import { warmupJobs } from "../warmup.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_OUTPUT = 2 * 1024 ** 3;
@@ -58,9 +59,23 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     authorize(req);
     const cap = req.body;
     if (!cap || (cap.class !== "cpu" && cap.class !== "gpu")) fail(400, "request.invalid");
-    const r = await s.db.query<{ id: string }>("INSERT INTO workers (class, capabilities) VALUES ($1, $2) RETURNING id", [cap.class, JSON.stringify(cap)]);
+    const r = await s.db.query<{ id: string }>("INSERT INTO workers (class, capabilities, warming) VALUES ($1, $2, $3) RETURNING id", [
+      cap.class,
+      JSON.stringify(cap),
+      cap.warmup === true && (cap.class === "gpu" || s.config.interactiveOnCpu),
+    ]);
     await podWorkerRegistered(s.db, cap.podId, r.rows[0]!.id);  // a pod the capacity manager rented
     return { workerId: r.rows[0]!.id };
+  });
+
+  // A starting GPU worker's own jobs (warmup.ts): run once, results thrown away; its first claim ends the warm-up.
+  app.post<{ Body: { workerId?: string } }>("/v1/worker/warmup", async (req) => {
+    authorize(req);
+    const workerId = String(req.body?.workerId ?? "");
+    if (!UUID.test(workerId)) fail(400, "request.invalid");
+    const w = await s.db.query<{ class: string }>("UPDATE workers SET last_seen_at = now() WHERE id = $1 RETURNING class", [workerId]);
+    if (!w.rows[0] || (w.rows[0].class !== "gpu" && !s.config.interactiveOnCpu)) return { jobs: [] };
+    return { jobs: await warmupJobs(s.db, s.storage) };
   });
 
   // Long poll: waits up to waitSeconds (≤ 25) for a job.
@@ -69,7 +84,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     const { workerId, loadedModels = [] } = req.body ?? ({} as WorkerClaimRequest);
     if (!UUID.test(String(workerId))) fail(400, "request.invalid");
     const w = await s.db.query<{ class: string; capabilities: WorkerCapabilities; draining: boolean }>(
-      "UPDATE workers SET last_seen_at = now(), loaded = $2 WHERE id = $1 RETURNING class, capabilities, draining",
+      "UPDATE workers SET last_seen_at = now(), loaded = $2, warming = false WHERE id = $1 RETURNING class, capabilities, draining",
       [
       workerId,
         loadedModels.filter((m) => UUID.test(m)),

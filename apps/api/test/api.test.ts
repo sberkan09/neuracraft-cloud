@@ -1261,4 +1261,35 @@ describe("sessions and on-demand GPUs", () => {
     assert.deepEqual(await rp.list(), [{ providerId: "pod123", name: "nc-gpu-1234abcd", status: "running" }]);
     await rp.terminate("gone");  // already gone: fine
   });
+
+  it("warms a starting GPU worker up: its own preset jobs on a blank sketch, ready only once it claims", async () => {
+    await noWorkers();
+    await presetCatalog();
+    await noWorkers();
+    const { capacityState } = await import("../src/capacity.js");
+    const { WARMUP_INPUT } = await import("../src/warmup.js");
+    const state = () => capacityState(h.s.db, h.s.config.capacity, [], h.s.config.interactiveGraceSeconds);
+    const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 8, memoryBytes: 1, engineVersion: "test", warmup: true } })).workerId;
+    assert.notEqual((await state()).state, "ready");  // loading its models
+    assert.equal((await inject({ method: "POST", url: "/v1/worker/warmup", payload: { workerId } })).statusCode, 401);
+    const r = await inject({ method: "POST", url: "/v1/worker/warmup", headers: worker, payload: { workerId } });
+    assert.equal(r.statusCode, 200, r.body);
+    const [job, ...rest] = json(r).jobs;
+    assert.equal(rest.length, 0);
+    assert.equal(job.jobId, "warmup-sketch_to_scene");
+    const steps = job.workflow.steps as { op: string; path?: string; lora?: string[] }[];
+    assert.equal(steps[0]!.path, `asset:${WARMUP_INPUT}`);
+    assert.ok(steps.find((st) => st.op === "txt2img")!.lora, "map mode: the LCM LoRA is loaded too");
+    assert.ok(steps.some((st) => st.op === "classify"), "and the output classifier");
+    const blank = job.files.find((f: { assetId: string }) => f.assetId === WARMUP_INPUT);
+    assert.equal(job.files.length, 6);  // five catalog models and the blank sketch
+    const png = await h.s.storage.get(`blobs/${blank.sha256}`);
+    assert.deepEqual([...png.subarray(1, 4)], [...Buffer.from("PNG")]);
+    assert.equal(png.readUInt32BE(16), 512);
+    assert.equal(json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job, null);
+    assert.equal((await state()).state, "ready");
+    // A CPU worker gets none.
+    const cpu = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "cpu", cores: 1, memoryBytes: 1, engineVersion: "test", warmup: true } })).workerId;
+    assert.deepEqual(json(await inject({ method: "POST", url: "/v1/worker/warmup", headers: worker, payload: { workerId: cpu } })).jobs, []);
+  });
 });

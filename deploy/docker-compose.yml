@@ -42,7 +42,7 @@ services:
       RUNPOD_DATA_CENTERS: ${RUNPOD_DATA_CENTERS:-}
       RUNPOD_NETWORK_VOLUME_ID: ${RUNPOD_NETWORK_VOLUME_ID:-}
       RUNPOD_WORKER_API_URL: ${RUNPOD_WORKER_API_URL:-}
-      RUNPOD_WORKER_ENV: ${RUNPOD_WORKER_ENV:-KEEP_MODELS=8,INTERACTIVE_ONLY=1}
+      RUNPOD_WORKER_ENV: ${RUNPOD_WORKER_ENV:-KEEP_MODELS=8,INTERACTIVE_ONLY=1,WARMUP=1}
     # Logs hold no bodies or signed URLs (docs/PRIVACY.md); rotated, at most 100 MB.
     logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
     volumes:

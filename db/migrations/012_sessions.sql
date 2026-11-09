@@ -43,3 +43,5 @@ CREATE INDEX gpu_pods_live ON gpu_pods(state) WHERE state IN ('requested', 'star
 
 -- A worker told to finish its job and take no more (the capacity manager stops its pod after).
 ALTER TABLE workers ADD COLUMN draining boolean NOT NULL DEFAULT false;
+-- A worker loading its interactive presets' models (warmup.ts) before its first claim: not ready yet.
+ALTER TABLE workers ADD COLUMN warming boolean NOT NULL DEFAULT false;
