@@ -1,6 +1,7 @@
 // Abuse reports (issue #18): the owner of a generated picture reports it from inside the app (Google
 // Play's AI-generated content policy asks for this). Once per asset and reporter; anyone else gets
-// 404, so the asset's existence is not given away.
+// 404, so the asset's existence is not given away. From then on the picture is hidden from its owner
+// too (no download, not in listings or the job's outputs) until a review dismisses the report.
 import type { FastifyInstance } from "fastify";
 import type { Services } from "../app.js";
 import { requireUser } from "../auth.js";

@@ -29,7 +29,7 @@ export interface JobRow {
 
 export async function jobJson(s: Services, row: JobRow): Promise<Job> {
   const outs = await s.db.query<{ name: string; asset_id: string; content_type: string; bytes: string }>(
-    "SELECT o.name, o.asset_id, a.content_type, a.bytes FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 AND a.status = 'ready' ORDER BY o.name",
+    "SELECT o.name, o.asset_id, a.content_type, a.bytes FROM job_outputs o JOIN assets a ON a.id = o.asset_id WHERE o.job_id = $1 AND a.status = 'ready' AND a.reported_at IS NULL ORDER BY o.name",
     [row.id],
   );
   return {
@@ -166,22 +166,50 @@ export async function jobRoutes(app: FastifyInstance, s: Services) {
     const res = reply.raw;
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" });
     const send = (e: JobEvent | { type: "job"; job: Job }) => res.write(`data: ${JSON.stringify(e)}\n\n`);
-    send({ type: "job", job: await jobJson(s, row) });
     const finished = new Set(["succeeded", "failed", "cancelled"]);
-    if (finished.has(row.state)) return res.end();
-    const ping = setInterval(() => res.write(": ping\n\n"), 15000);
-    const stop = s.events.subscribe(row.id, async (e) => {
-      if (e.type === "state" && finished.has(e.state)) {
-        const fresh = await s.db.query<JobRow>("SELECT * FROM jobs WHERE id = $1", [row.id]);
-        send({ type: "job", job: await jobJson(s, fresh.rows[0]!) });
-        close();
-      } else send(e);
-    });
+    let closed = false;
+    let ping: NodeJS.Timeout | undefined;
     const close = () => {
+      if (closed) return;
+      closed = true;
       clearInterval(ping);
       stop();
       res.end();
     };
+    // The last event is the job as it finished, read from the database, then the stream ends.
+    const finish = async () => {
+      if (closed) return;
+      const fresh = await s.db.query<JobRow>("SELECT * FROM jobs WHERE id = $1", [row.id]);
+      if (closed) return;
+      send({ type: "job", job: await jobJson(s, fresh.rows[0]!) });
+      close();
+    };
+    // Subscribe before reading the job, so an event between the read and the subscription (the job
+    // finishing, say) is not lost; events that arrive meanwhile wait for the first message.
+    let early: (JobEvent | null)[] | null = [];
+    const handle = (e: JobEvent) => {
+      if (closed) return;
+      if (e.type === "state" && finished.has(e.state)) void finish();
+      else send(e);
+    };
+    const stop = s.events.subscribe(row.id, (e) => (early ? early.push(e) : handle(e)));
     req.raw.on("close", close);
+    const now = (await s.db.query<JobRow>("SELECT * FROM jobs WHERE id = $1", [row.id])).rows[0]!;
+    if (closed) return;
+    send({ type: "job", job: await jobJson(s, now) });
+    if (finished.has(now.state)) return close();
+    const waiting = early;
+    early = null;
+    for (const e of waiting) if (e) handle(e);
+    // And in case an event never comes (another API process, a dropped notification): every ping
+    // also looks at the job itself.
+    ping = setInterval(() => {
+      if (closed) return;
+      res.write(": ping\n\n");
+      void s.db.query<{ state: string }>("SELECT state FROM jobs WHERE id = $1", [row.id]).then(
+        (r) => (r.rows[0] && finished.has(r.rows[0].state) ? finish() : undefined),
+        () => undefined,
+      );
+    }, s.config.ssePingSeconds * 1000);
   });
 }

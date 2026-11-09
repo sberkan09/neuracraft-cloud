@@ -111,7 +111,8 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: { kind?: string } }>("/v1/assets", async (req) => {
     const u = await requireUser(s.db, req, "assets:read");
     const r = await s.db.query<AssetRow>(
-      "SELECT * FROM assets WHERE owner_id = $1 AND end_user IS NOT DISTINCT FROM $3 AND status IN ('ready', 'held') AND ($2::text IS NULL OR kind = $2) ORDER BY created_at DESC LIMIT 200",
+      // A reported picture is hidden from its owner too until the report is reviewed (moderation.ts).
+      "SELECT * FROM assets WHERE owner_id = $1 AND end_user IS NOT DISTINCT FROM $3 AND status IN ('ready', 'held') AND reported_at IS NULL AND ($2::text IS NULL OR kind = $2) ORDER BY created_at DESC LIMIT 200",
       [u.id, req.query.kind ?? null, u.endUser],
     );
     return { assets: r.rows.map(assetJson) };
@@ -127,7 +128,7 @@ export async function assetRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Params: { id: string } }>("/v1/assets/:id/content", async (req, reply) => {
     const u = await requireUser(s.db, req, "assets:read");
     if (!UUID.test(req.params.id)) fail(404, "not_found");
-    const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND end_user IS NOT DISTINCT FROM $3 AND status = 'ready' AND kind <> 'model'", [req.params.id, u.id, u.endUser]);
+    const r = await s.db.query<AssetRow>("SELECT * FROM assets WHERE id = $1 AND owner_id = $2 AND end_user IS NOT DISTINCT FROM $3 AND status = 'ready' AND kind <> 'model' AND reported_at IS NULL", [req.params.id, u.id, u.endUser]);
     const a = r.rows[0] ?? fail(404, "not_found");
     return reply.redirect(s.storage.downloadUrl(blobKey(a.sha256!), 600, a.name), 302);
   });

@@ -117,6 +117,30 @@ describe("jobs", () => {
     assert.equal(await code({ steps: Array.from({ length: 13 }, () => ({ op: "resize", in: "p" })) }), "limit.steps");
   });
 
+  it("ends a job's event stream with the finished job, even when the event itself is lost", async () => {
+    const a = await signUp(h.app);
+    const pic = await uploadPicture(h.app, a.cookie);
+    const jobId = json(await inject({ method: "POST", url: "/v1/jobs", headers: { cookie: a.cookie }, payload: { workflow: resize(pic) } })).job.id;
+    const ping = h.s.config.ssePingSeconds;
+    h.s.config.ssePingSeconds = 0.2;
+    try {
+      const stream = inject({ method: "GET", url: `/v1/jobs/${jobId}/events`, headers: { cookie: a.cookie } });
+      await new Promise((r) => setTimeout(r, 100));
+      // Finished by another API process, say: no event here.
+      await h.s.db.query("UPDATE jobs SET state = 'cancelled', finished_at = now() WHERE id = $1", [jobId]);
+      const r = await Promise.race([stream, new Promise<null>((r) => setTimeout(() => r(null), 5000))]);
+      assert.ok(r, "the stream ended");
+      const events = r.body.split("\n").filter((l) => l.startsWith("data: ")).map((l) => JSON.parse(l.slice(6)));
+      assert.equal(events[0].job.state, "queued");
+      assert.deepEqual([events.at(-1).type, events.at(-1).job.state], ["job", "cancelled"]);
+    } finally {
+      h.s.config.ssePingSeconds = ping;
+    }
+    // A job already finished: one event, then the end.
+    const again = await inject({ method: "GET", url: `/v1/jobs/${jobId}/events`, headers: { cookie: a.cookie } });
+    assert.equal(again.body.split("\n").filter((l) => l.startsWith("data: ")).length, 1);
+  });
+
   it("gives a job that finishes before its first heartbeat a start time", async () => {
     const a = await signUp(h.app);
     const pic = await uploadPicture(h.app, a.cookie);
@@ -703,7 +727,15 @@ describe("moderation", () => {
     assert.ok(row.reported_at);
     assert.ok(row.snapshot.prompt.prompt.includes("bridge"));
     assert.equal(row.snapshot.inputs[0].name, "sketch.png");
-    assert.equal(json(await inject({ method: "GET", url: `/v1/jobs/${job.id}`, headers: { cookie: a.cookie } })).job.outputs.length, 1);  // still visible to its owner
+    // Hidden from its owner too until reviewed: no download, not among the job's outputs or the assets.
+    assert.equal((await inject({ method: "GET", url: `/v1/assets/${asset}/content`, headers: { cookie: a.cookie } })).statusCode, 404);
+    assert.equal(json(await inject({ method: "GET", url: `/v1/jobs/${job.id}`, headers: { cookie: a.cookie } })).job.outputs.length, 0);
+    assert.ok(!json(await inject({ method: "GET", url: "/v1/assets", headers: { cookie: a.cookie } })).assets.some((x: { id: string }) => x.id === asset));
+    // A review that finds nothing wrong gives it back.
+    const { dismissReport } = await import("../src/moderation.js");
+    await dismissReport(h.s.db, json(first).report.id, "ayse");
+    assert.equal((await inject({ method: "GET", url: `/v1/assets/${asset}/content`, headers: { cookie: a.cookie } })).statusCode, 302);
+    assert.equal(json(await inject({ method: "GET", url: `/v1/jobs/${job.id}`, headers: { cookie: a.cookie } })).job.outputs.length, 1);
   });
 
   it("lets an operator list reports, remove the asset (logged), dismiss and flag the account", async () => {
