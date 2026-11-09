@@ -4,7 +4,9 @@
 //
 // Environment: API_URL, WORKER_TOKEN (required); WORKER_CLASS (cpu, or gpu: runs on the GPU and
 // fails to start without one), CACHE_DIR (.data/cache), WORK_DIR (.data/jobs), CACHE_MAX_GB (20),
-// KEEP_MODELS (2: models kept loaded between jobs), ONCE=1 (at most one job, then exit: tests).
+// KEEP_MODELS (2: models kept loaded between jobs), ONCE=1 (at most one job, then exit: tests),
+// WORKER_REGION (e.g. eu), INTERACTIVE_ONLY=1 (interactive jobs only), WORKER_POD_ID (set by the API's
+// capacity manager on the pods it rents; the worker exits when the API says it is draining).
 #include "Http.h"
 #include "Job.h"
 
@@ -71,6 +73,8 @@ int main() {
     // A worker kept for interactive presets (issue #20): it never takes a long batch job, so the
     // preset's models stay loaded and a request at the table never waits behind a video.
     if (env("INTERACTIVE_ONLY") == "1") capsValue.object.push_back({"interactiveOnly", nc::json::makeBool(true)});
+    // A pod the capacity manager rented: the API marks it running once this worker registers.
+    if (const std::string pod = env("WORKER_POD_ID"); !pod.empty()) capsValue.object.push_back({"podId", makeString(pod)});
     // Services next to a GPU worker (the engine's services/): the 3D service (NEURACRAFT_3D_URL) lets it
     // take image_to_3d jobs ("3d"), the rigging service (NEURACRAFT_RIG_URL) rig jobs ("rig"). Waits for
     // each service's model to load before saying so.
@@ -120,6 +124,11 @@ int main() {
                 continue;
             }
             const nc::json::Value v = nc::json::parse(r.body);
+            // Draining: the capacity manager is giving this worker's pod back. Nothing more to do.
+            if (const nc::json::Value* stop = v.find("stop"); stop && stop->type == nc::json::Value::Type::Bool && stop->boolean) {
+                std::cerr << "neuracraft-worker: told to stop (draining)\n";
+                return 0;
+            }
             const nc::json::Value* job = v.find("job");
             if (!job || !job->isObject()) {
                 if (once) return 1;

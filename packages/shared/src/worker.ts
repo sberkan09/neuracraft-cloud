@@ -14,6 +14,8 @@ export interface WorkerCapabilities {
   region?: string;
   // Kept for interactive jobs only (INTERACTIVE_ONLY=1): a long batch job never occupies it.
   interactiveOnly?: boolean;
+  // A pod the capacity manager rented (WORKER_POD_ID).
+  podId?: string;
 }
 
 export interface WorkerRegisterResponse {
@@ -48,6 +50,7 @@ export interface ClaimedJob {
 
 export interface WorkerClaimResponse {
   job: ClaimedJob | null;
+  stop?: boolean; // the worker is draining: no more jobs (its pod is about to be stopped)
 }
 
 export interface HeartbeatRequest {

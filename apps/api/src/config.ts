@@ -22,6 +22,40 @@ export interface Config {
   retentionEvery: number; // seconds between cleanups (retention.ts); 0 = never
   interactiveGraceSeconds: number; // interactive jobs are refused when no GPU worker was seen for this long
   interactiveOnCpu: boolean; // development and tests only: interactive jobs may run on CPU workers (and need no GPU)
+  sessions: {
+    heartbeatSeconds: number; // how often apps should send a heartbeat
+    expireSeconds: number; // a session without a heartbeat for this long is closed
+    maxHours: number; // the longest a session stays open
+    idleMinutes: number; // a session without an interactive job for this long no longer asks for capacity
+    maxPerPartner: number; // open sessions per account (partners: partners.max_sessions overrides)
+  };
+  capacity: CapacityConfig;
+}
+
+// On-demand GPU workers (capacity.ts). provider "" = none: workers are started by hand, as before.
+export interface CapacityConfig {
+  provider: "" | "runpod";
+  everySeconds: number; // how often the manager looks
+  sessionsPerWorker: number; // open sessions one warm worker serves
+  maxPods: number;
+  graceMinutes: number; // pods stay this long after the last session stopped asking
+  startTimeoutSeconds: number; // a pod whose worker has not registered by then is given up
+  expectedStartSeconds: number; // what apps are told to expect while a pod starts
+  maxPodHours: number; // a pod is replaced after this long
+  dailyBudgetUsd: number; // no new pods once today's pods cost this much
+  runpod: {
+    apiKey: string;
+    url: string;
+    image: string;
+    registryAuthId: string;
+    gpuTypes: string[]; // tried in order
+    cloud: "SECURE" | "COMMUNITY";
+    dataCenters: string[];
+    networkVolumeId: string; // the models cache, shared by the pods (mounted at /runpod-volume)
+    workerApiUrl: string; // how the pods reach this API
+    workerToken: string;
+    workerEnv: Record<string, string>; // anything else for the worker (KEEP_MODELS=8, WORKER_REGION=eu, ...)
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -50,5 +84,41 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     retentionEvery: Number(env.RETENTION_EVERY_SECONDS ?? 600),
     interactiveGraceSeconds: Number(env.INTERACTIVE_GRACE_SECONDS ?? 60),
     interactiveOnCpu: env.INTERACTIVE_ON_CPU === "1",
+    sessions: {
+      heartbeatSeconds: Number(env.SESSION_HEARTBEAT_SECONDS ?? 120),
+      expireSeconds: Number(env.SESSION_EXPIRE_SECONDS ?? 600),
+      maxHours: Number(env.SESSION_MAX_HOURS ?? 8),
+      idleMinutes: Number(env.SESSION_IDLE_MINUTES ?? 45),
+      maxPerPartner: Number(env.SESSION_MAX_PER_ACCOUNT ?? 50),
+    },
+    capacity: {
+      provider: env.CAPACITY_PROVIDER === "runpod" ? "runpod" : "",
+      everySeconds: Number(env.CAPACITY_EVERY_SECONDS ?? 15),
+      sessionsPerWorker: Number(env.CAPACITY_SESSIONS_PER_WORKER ?? 20),
+      maxPods: Number(env.CAPACITY_MAX_PODS ?? 3),
+      graceMinutes: Number(env.CAPACITY_GRACE_MINUTES ?? 15),
+      startTimeoutSeconds: Number(env.CAPACITY_START_TIMEOUT_SECONDS ?? 600),
+      expectedStartSeconds: Number(env.CAPACITY_EXPECTED_START_SECONDS ?? 90),
+      maxPodHours: Number(env.CAPACITY_MAX_POD_HOURS ?? 12),
+      dailyBudgetUsd: Number(env.CAPACITY_DAILY_BUDGET_USD ?? 10),
+      runpod: {
+        apiKey: env.RUNPOD_API_KEY ?? "",
+        url: env.RUNPOD_API_URL || "https://api.runpod.io",
+        image: env.RUNPOD_IMAGE ?? "",
+        registryAuthId: env.RUNPOD_REGISTRY_AUTH_ID ?? "",
+        gpuTypes: (env.RUNPOD_GPU_TYPES || "NVIDIA RTX A5000,NVIDIA RTX A4000,NVIDIA GeForce RTX 4090").split(",").map((x) => x.trim()).filter(Boolean),
+        cloud: env.RUNPOD_CLOUD === "COMMUNITY" ? "COMMUNITY" : "SECURE",
+        dataCenters: (env.RUNPOD_DATA_CENTERS ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+        networkVolumeId: env.RUNPOD_NETWORK_VOLUME_ID ?? "",
+        workerApiUrl: env.RUNPOD_WORKER_API_URL || env.STORAGE_URL_PREFIX || "",
+        workerToken: env.RUNPOD_WORKER_TOKEN ?? (env.WORKER_TOKENS ?? "").split(",")[0] ?? "",
+        workerEnv: Object.fromEntries(
+          (env.RUNPOD_WORKER_ENV || "KEEP_MODELS=8,INTERACTIVE_ONLY=1")
+            .split(",")
+            .map((kv) => kv.split("=").map((x) => x.trim()))
+            .filter((kv) => kv.length === 2 && kv[0]),
+        ),
+      },
+    },
   };
 }

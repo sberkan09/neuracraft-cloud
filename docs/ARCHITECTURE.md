@@ -65,8 +65,8 @@ changes.
     engine's `modelLoadSeconds()`), running and uploading, and the claim notes whether the worker
     already held the job's models (`warm`).
   - **Operators**: `cli/latency.js` prints p50 / p95 per preset and mode.
-  - **Warm capacity**: one GPU worker kept for interactive jobs (`INTERACTIVE_ONLY=1`,
-    `KEEP_MODELS=8`) stays on during the hours a partner's app is used, rather than scaling to zero.
+  - **Warm capacity**: warm GPU workers kept for interactive jobs (`INTERACTIVE_ONLY=1`,
+    `KEEP_MODELS=8`) while apps have sessions open (below), rather than always on or scaled to zero.
     Measured on an RTX 4090 ([docs/reports/sketch-to-scene.md](reports/sketch-to-scene.md)):
     - warm: about 2.5 s for a map-mode picture; 50 jobs while a batch job shared the GPU: p50 3.8 s,
       p95 6.3 s;
@@ -85,8 +85,44 @@ changes.
 * **Warm models** — a worker keeps the models of its last jobs loaded (`KEEP_MODELS`, default 2),
   their weights resident in GPU memory, and reports them when it asks for work; the scheduler then
   prefers jobs that need those models.
-* **Autoscaler** (later) — watches queue depth per worker class and starts or stops machines
-  through the providers' APIs (Hetzner, Runpod). Workers are cattle: any can die at any moment.
+* **Sessions and on-demand GPUs** (`apps/api/src/capacity.ts`, `routes/sessions.ts`) — an app opens a
+  session when interactive work may come soon. GM Cebi opens one when a game master starts a game:
+  the first sketch usually comes minutes later, enough for a pod to start.
+  - **API** (scope `jobs:submit`; partner apps send `X-End-User`):
+    - `POST /v1/sessions` opens a session, or returns the one already open for this user / end user
+      (200).
+    - `POST /v1/sessions/:id/heartbeat` keeps it open; send one every `heartbeatSeconds` (120).
+    - `DELETE /v1/sessions/:id` closes it.
+    - Every answer carries `capacity`: `ready`, `warming` with `etaSeconds`, or `unavailable` with a
+      reason.
+  - **Rules**:
+    - A session without a heartbeat for `SESSION_EXPIRE_SECONDS` (600) is closed, and so is one past
+      `SESSION_MAX_HOURS` (8). A closed session answers `session.closed` (410).
+    - A session stops asking for capacity after `SESSION_IDLE_MINUTES` (45) without an interactive
+      job.
+    - One session per user / end user. A partner may hold `partners.max_sessions` open at once
+      (default `SESSION_MAX_PER_ACCOUNT`, 50); past that: `session.limit` (429).
+    - Interactive jobs record their session and keep it asking.
+  - **Capacity manager** (every `CAPACITY_EVERY_SECONDS`, one replica at a time):
+    - **How many pods**: none without demand; otherwise one per `CAPACITY_SESSIONS_PER_WORKER` (20)
+      asking sessions, at least one, plus one when interactive jobs wait, up to `CAPACITY_MAX_PODS`.
+    - **Renting**: pods are rented through the provider (Runpod REST API v2: `RUNPOD_GPU_TYPES`
+      tried in order, `RUNPOD_DATA_CENTERS`, the worker image `RUNPOD_IMAGE`). Pod workers register
+      with `WORKER_POD_ID` and the settings in `RUNPOD_WORKER_ENV` (`INTERACTIVE_ONLY=1`,
+      `KEEP_MODELS=8`). With `RUNPOD_NETWORK_VOLUME_ID`, their model cache lives on a shared network
+      volume, so a new pod does not download the models again.
+    - **Giving back**: after the last demand, pods stay `CAPACITY_GRACE_MINUTES` (15). Then they drain:
+      the worker takes no more jobs and is told to stop, and the pod is deleted once it is idle.
+    - **Replacing**: a pod whose worker has not registered within `CAPACITY_START_TIMEOUT_SECONDS`
+      (600), whose worker stopped answering, or that ran `CAPACITY_MAX_POD_HOURS` (12) is replaced.
+    - **Clean-up**: pods the provider has under the `nc-gpu-` prefix that this service does not know
+      of are deleted.
+    - **Budget**: no new pods once today's pods have cost `CAPACITY_DAILY_BUDGET_USD`; sessions then
+      answer `unavailable`.
+  - **While a pod starts**: interactive jobs are accepted and wait for it, instead of
+    `job.no_gpu_worker`.
+  - **Without `CAPACITY_PROVIDER`**: sessions still work, but GPU workers are started by hand.
+  Workers are cattle: any can die at any moment.
 
 ## Jobs
 

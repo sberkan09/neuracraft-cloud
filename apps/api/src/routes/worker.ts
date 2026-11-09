@@ -15,6 +15,7 @@ import { OUTPUT_FILE } from "../workflow.js";
 import { MODERATION_FILE, reportHeld, type Verdict } from "../moderation.js";
 import { blobKey } from "../storage.js";
 import { outputExpiry } from "../retention.js";
+import { podWorkerRegistered } from "../capacity.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_OUTPUT = 2 * 1024 ** 3;
@@ -58,6 +59,7 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     const cap = req.body;
     if (!cap || (cap.class !== "cpu" && cap.class !== "gpu")) fail(400, "request.invalid");
     const r = await s.db.query<{ id: string }>("INSERT INTO workers (class, capabilities) VALUES ($1, $2) RETURNING id", [cap.class, JSON.stringify(cap)]);
+    await podWorkerRegistered(s.db, cap.podId, r.rows[0]!.id);  // a pod the capacity manager rented
     return { workerId: r.rows[0]!.id };
   });
 
@@ -66,14 +68,15 @@ export async function workerRoutes(app: FastifyInstance, s: Services) {
     authorize(req);
     const { workerId, loadedModels = [] } = req.body ?? ({} as WorkerClaimRequest);
     if (!UUID.test(String(workerId))) fail(400, "request.invalid");
-    const w = await s.db.query<{ class: string; capabilities: WorkerCapabilities }>(
-      "UPDATE workers SET last_seen_at = now(), loaded = $2 WHERE id = $1 RETURNING class, capabilities",
+    const w = await s.db.query<{ class: string; capabilities: WorkerCapabilities; draining: boolean }>(
+      "UPDATE workers SET last_seen_at = now(), loaded = $2 WHERE id = $1 RETURNING class, capabilities, draining",
       [
       workerId,
         loadedModels.filter((m) => UUID.test(m)),
       ],
     );
     const workerClass = w.rows[0]?.class ?? fail(401, "worker.unauthorized");
+    if (w.rows[0]!.draining) return { job: null, stop: true };  // its pod is being given back
     const features = Array.isArray(w.rows[0]?.capabilities?.features) ? w.rows[0]!.capabilities.features!.map(String) : [];
     const region = typeof w.rows[0]?.capabilities?.region === "string" ? w.rows[0]!.capabilities.region : "";
     const interactiveOnly = w.rows[0]?.capabilities?.interactiveOnly === true;

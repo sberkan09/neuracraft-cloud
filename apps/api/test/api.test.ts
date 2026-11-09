@@ -1084,3 +1084,181 @@ describe("partner allowances", () => {
     assert.equal(json(await inject({ method: "GET", url: "/v1/partner/end-users/install-a/usage", headers: server })).allowance.balance, before);
   });
 });
+
+describe("sessions and on-demand GPUs", () => {
+  const appUser = async () => {
+    const { createToken } = await import("../src/auth.js");
+    const p = await signUp(h.app);
+    const t = await createToken(h.s.db, p.id, "app", "GM Cebi", ["jobs:submit", "jobs:read", "assets:read"], null);
+    return { p, as: (e: string) => ({ authorization: `Bearer ${t.secret}`, "x-end-user": e }) };
+  };
+  const noWorkers = () => h.s.db.query("UPDATE workers SET last_seen_at = now() - interval '1 hour'");
+  const open = (headers: Record<string, string>) => inject({ method: "POST", url: "/v1/sessions", headers });
+
+  it("opens one session per end user, keeps it with heartbeats, closes it, and limits a partner", async () => {
+    await noWorkers();
+    const { p, as } = await appUser();
+    const first = await open(as("install-a"));
+    assert.equal(first.statusCode, 201, first.body);
+    const s1 = json(first);
+    assert.equal(s1.session.heartbeatSeconds, 120);
+    assert.deepEqual(s1.capacity, { state: "unavailable", reason: "no GPU worker" });  // no provider here, no GPU
+    const again = await open(as("install-a"));
+    assert.equal(again.statusCode, 200);
+    assert.equal(json(again).session.id, s1.session.id);
+    const hb = await inject({ method: "POST", url: `/v1/sessions/${s1.session.id}/heartbeat`, headers: as("install-a") });
+    assert.equal(hb.statusCode, 200);
+    assert.equal((await inject({ method: "POST", url: `/v1/sessions/${s1.session.id}/heartbeat`, headers: as("install-b") })).statusCode, 404);
+    // A partner may hold max_sessions open at once.
+    await h.s.db.query("INSERT INTO partners (user_id, max_sessions) VALUES ($1, 1)", [p.id]);
+    const limited = await open(as("install-b"));
+    assert.equal(limited.statusCode, 429);
+    assert.equal(json(limited).error.code, "session.limit");
+    assert.equal((await inject({ method: "DELETE", url: `/v1/sessions/${s1.session.id}`, headers: as("install-a") })).statusCode, 200);
+    const gone = await inject({ method: "POST", url: `/v1/sessions/${s1.session.id}/heartbeat`, headers: as("install-a") });
+    assert.equal(gone.statusCode, 410);
+    assert.equal(json(gone).error.code, "session.closed");
+    assert.equal((await open(as("install-b"))).statusCode, 201);
+    // Without heartbeats a session is closed by the manager's next look.
+    const { CapacityManager } = await import("../src/capacity.js");
+    const m = new CapacityManager(h.s.db, h.s.config.capacity, h.s.config.sessions, null);
+    const r = await m.tick(new Date(Date.now() + 11 * 60_000));
+    assert.ok(r!.closed >= 1);
+    const row = (await h.s.db.query("SELECT close_reason FROM app_sessions WHERE user_id = $1 AND end_user = 'install-b'", [p.id])).rows[0];
+    assert.equal(row.close_reason, "expired");
+  });
+
+  it("rents a GPU pod for open sessions, queues jobs while it starts, and gives it back after the grace", async () => {
+    const { CapacityManager, CapacityUnavailable } = await import("../src/capacity.js");
+    const pods = new Map<string, { name: string; status: "starting" | "running" | "stopped" }>();
+    let fail: "none" | "capacity" = "none";
+    let n = 0;
+    const provider = {
+      name: "fake",
+      rent: async (spec: { id: string; name: string }) => {
+        if (fail === "capacity") throw new CapacityUnavailable("no GPUs");
+        const providerId = `fake-${++n}`;
+        pods.set(providerId, { name: spec.name, status: "starting" });
+        return { providerId, gpuType: "RTX A5000", region: "EU-RO-1", pricePerHour: 0.27 };
+      },
+      terminate: async (id: string) => void pods.delete(id),
+      list: async () => [...pods.entries()].map(([providerId, p]) => ({ providerId, ...p })),
+    };
+    const cfg = { ...h.s.config.capacity, provider: "runpod" as const, dailyBudgetUsd: 10 };
+    const saved = h.s.config.capacity;
+    h.s.config.capacity = cfg;
+    const m = new CapacityManager(h.s.db, cfg, h.s.config.sessions, provider);
+    h.s.capacity = m;
+    try {
+      await h.s.db.query("UPDATE app_sessions SET closed_at = now() - interval '1 day', close_reason = coalesce(close_reason, 'closed')");
+      await h.s.db.query("UPDATE gpu_pods SET state = 'stopped' WHERE state IN ('requested', 'starting', 'running', 'draining')");
+      await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE state = 'queued'");
+      await noWorkers();
+      assert.deepEqual((await m.tick())!.rented, []);  // nobody asks
+      await presetCatalog();
+      await noWorkers();  // (presetCatalog brought a GPU worker online)
+
+      const { as } = await appUser();
+      const opened = json(await open(as("table-1")));
+      await new Promise((r) => setTimeout(r, 50));  // the kick from opening runs a tick
+      await m.tick();
+      const live = (await h.s.db.query("SELECT id, provider_id, state, price_per_hour FROM gpu_pods WHERE state IN ('requested', 'starting', 'running')")).rows;
+      assert.equal(live.length, 1);
+      assert.equal(live[0].state, "starting");
+      assert.equal(pods.size, 1);
+      const hb = json(await inject({ method: "POST", url: `/v1/sessions/${opened.session.id}/heartbeat`, headers: as("table-1") }));
+      assert.equal(hb.capacity.state, "warming");
+      assert.ok(hb.capacity.etaSeconds > 0 && hb.capacity.etaSeconds <= 90);
+
+      // A job while the pod starts waits for it (no job.no_gpu_worker) and keeps the session asking.
+      const sub = await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: as("table-1"), payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } });
+      assert.equal(sub.statusCode, 201, sub.body);
+      const tied = (await h.s.db.query("SELECT session_id FROM jobs WHERE id = $1", [json(sub).job.id])).rows[0].session_id;
+      assert.equal(tied, opened.session.id);
+
+      // The pod's worker registers: the pod is running, the session's capacity ready.
+      const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 8, memoryBytes: 1, engineVersion: "test", interactiveOnly: true, podId: live[0].id } })).workerId;
+      const pod = (await h.s.db.query("SELECT state, worker_id FROM gpu_pods WHERE id = $1", [live[0].id])).rows[0];
+      assert.deepEqual([pod.state, pod.worker_id], ["running", workerId]);
+      assert.equal(json(await inject({ method: "POST", url: `/v1/sessions/${opened.session.id}/heartbeat`, headers: as("table-1") })).capacity.state, "ready");
+      assert.deepEqual((await m.tick())!.rented, []);  // one session: one pod
+      await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE id = $1", [json(sub).job.id]);
+
+      // The session ends: the pod stays through the grace, then drains and is stopped.
+      await inject({ method: "DELETE", url: `/v1/sessions/${opened.session.id}`, headers: as("table-1") });
+      assert.deepEqual((await m.tick())!.drained, []);
+      const later = new Date(Date.now() + 16 * 60_000);
+      await h.s.db.query("UPDATE workers SET last_seen_at = $2 WHERE id = $1", [workerId, later]);
+      const r = await m.tick(later);
+      assert.deepEqual(r!.drained, [live[0].id]);
+      assert.ok(r!.stopped.includes(live[0].id));  // idle: drained and stopped in the same look
+      assert.equal(pods.size, 0);
+      assert.equal(json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).stop, true);
+
+      // A pod the provider has but this service does not know of is terminated.
+      pods.set("stray", { name: "nc-gpu-deadbeef", status: "running" });
+      await m.tick();
+      await new Promise((r) => setTimeout(r, 50));
+      assert.ok(!pods.has("stray"));
+
+      // A pod whose worker never registers is given up; no GPU at the provider blocks renting.
+      const s2 = json(await open(as("table-2")));
+      await new Promise((r) => setTimeout(r, 200));  // the kick from opening rents it
+      await m.tick();
+      assert.equal(pods.size, 1);
+      const r3 = await m.tick(new Date(Date.now() + 11 * 60_000));
+      assert.equal(r3!.failed.length, 1);
+      assert.equal(pods.size, 0);
+      assert.ok(s2.session.id);
+      fail = "capacity";
+      const m2 = new CapacityManager(h.s.db, cfg, h.s.config.sessions, provider);
+      h.s.capacity = m2;
+      const s3 = json(await open(as("table-3")));
+      await new Promise((r) => setTimeout(r, 200));
+      await m2.tick();
+      assert.match(m2.blocked ?? "", /no GPU/);
+      const blocked = json(await inject({ method: "POST", url: `/v1/sessions/${s3.session.id}/heartbeat`, headers: as("table-3") }));
+      assert.deepEqual(blocked.capacity, { state: "unavailable", reason: m2.blocked });
+
+      // The daily budget: no more pods once today's cost it.
+      fail = "none";
+      const m3 = new CapacityManager(h.s.db, { ...cfg, dailyBudgetUsd: 0 }, h.s.config.sessions, provider);
+      await m3.tick();
+      assert.match(m3.blocked ?? "", /budget/);
+      assert.equal(pods.size, 0);
+      assert.ok((await m.spentToday()) >= 0);
+    } finally {
+      await h.s.capacity?.settle();
+      await m.settle();
+      h.s.config.capacity = saved;
+      h.s.capacity = undefined;
+    }
+  });
+
+  it("rents Runpod pods with the worker's settings, trying GPU types in order", async () => {
+    const { RunpodProvider } = await import("../src/providers/runpod.js");
+    const calls: { method: string; url: string; body: any }[] = [];
+    const fakeFetch = (async (url: string, init: RequestInit) => {
+      const body = init.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ method: String(init.method), url, body });
+      if (init.method === "POST" && body.gpu.id === "NVIDIA RTX A5000")
+        return new Response(JSON.stringify({ detail: "There are no longer any instances available with the requested specifications." }), { status: 400 });
+      if (init.method === "POST") return new Response(JSON.stringify({ id: "pod123", cost: 0.25, dataCenterId: "EU-RO-1" }), { status: 201 });
+      if (init.method === "DELETE") return new Response(null, { status: 404 });
+      return new Response(JSON.stringify({ pods: [{ id: "pod123", name: "nc-gpu-1234abcd", status: "RUNNING" }, { id: "x", name: "someone-else", status: "RUNNING" }], pagination: { hasNextPage: false } }), { status: 200 });
+    }) as typeof fetch;
+    const rp = new RunpodProvider(
+      { ...h.s.config.capacity.runpod, apiKey: "k", image: "ghcr.io/x/worker-gpu:1", workerApiUrl: "https://api.example", workerToken: "wt", gpuTypes: ["NVIDIA RTX A5000", "NVIDIA RTX A4000"], networkVolumeId: "vol1", dataCenters: ["EU-RO-1"], workerEnv: { KEEP_MODELS: "8", INTERACTIVE_ONLY: "1" } },
+      fakeFetch,
+    );
+    const pod = await rp.rent({ id: "1234abcd-0000-0000-0000-000000000000", name: "nc-gpu-1234abcd" });
+    assert.deepEqual(pod, { providerId: "pod123", gpuType: "NVIDIA RTX A4000", region: "EU-RO-1", pricePerHour: 0.25 });
+    const sent = calls[1]!.body;
+    assert.equal(calls[1]!.url, "https://api.runpod.io/v2/pods");
+    assert.deepEqual(sent.env, { KEEP_MODELS: "8", INTERACTIVE_ONLY: "1", API_URL: "https://api.example", WORKER_TOKEN: "wt", WORKER_CLASS: "gpu", WORKER_POD_ID: "1234abcd-0000-0000-0000-000000000000", CACHE_DIR: "/runpod-volume/cache" });
+    assert.deepEqual(sent.mounts, { network: [{ volumeId: "vol1", path: "/runpod-volume" }] });
+    assert.deepEqual(sent.dataCenterIds, ["EU-RO-1"]);
+    assert.deepEqual(await rp.list(), [{ providerId: "pod123", name: "nc-gpu-1234abcd", status: "running" }]);
+    await rp.terminate("gone");  // already gone: fine
+  });
+});
