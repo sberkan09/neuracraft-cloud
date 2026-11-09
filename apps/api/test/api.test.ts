@@ -1,9 +1,10 @@
+import path from "node:path";
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { harness, json, local, PNG_1x1, signUp, uploadPicture, worker, type Harness } from "./helpers.js";
+import { ADMIN_TOKEN, harness, json, local, PNG_1x1, signUp, uploadPicture, worker, type Harness } from "./helpers.js";
 
 let h: Harness;
 before(async () => {
@@ -1017,7 +1018,8 @@ describe("interactive jobs", () => {
 
   it("records where each job's time went and gives operators percentiles per preset and mode", async () => {
     const { latencyStats } = await import("../src/latency.js");
-    const since = new Date(Date.now() - 1000);
+    // The database clock, so jobs earlier tests finished just before are not counted.
+    const since = (await h.s.db.query<{ t: Date }>("SELECT now() AS t")).rows[0]!.t;
     const a = await signUp(h.app);
     for (const run of [1, 2, 3])
       await runPreset(a.cookie, { "scene.png": PNG_1x1, "moderation.json": scores(0.01) }, PNG_1x1, { fetchSeconds: 0.1, loadSeconds: run === 1 ? 40 : 0, runSeconds: run, uploadSeconds: 0.05, bogus: 9 });
@@ -1227,6 +1229,28 @@ describe("sessions and on-demand GPUs", () => {
       assert.match(m3.blocked ?? "", /budget/);
       assert.equal(pods.size, 0);
       assert.ok((await m.spentToday()) >= 0);
+
+      // The monthly budget: a pod already there is drained as well, even while busy.
+      const m4 = new CapacityManager(h.s.db, cfg, h.s.config.sessions, provider);
+      await m4.tick();
+      assert.equal(pods.size, 1);
+      const [podId] = (await h.s.db.query<{ id: string }>("SELECT id FROM gpu_pods WHERE state IN ('requested', 'starting', 'running')")).rows.map((x) => x.id);
+      // Five minutes at 1000 USD/h: over a 15 USD month.
+      await h.s.db.query("UPDATE gpu_pods SET price_per_hour = 1000, requested_at = now() - interval '5 minutes' WHERE id = $1", [podId]);
+      assert.ok((await m4.spentThisMonth()) >= 15);
+      const m5 = new CapacityManager(h.s.db, { ...cfg, dailyBudgetUsd: 1e9, monthlyBudgetUsd: 15 }, h.s.config.sessions, provider);
+      await m5.tick();
+      assert.match(m5.blocked ?? "", /monthly GPU budget reached/);
+      const after = (await h.s.db.query<{ state: string }>("SELECT state FROM gpu_pods WHERE id = $1", [podId])).rows[0]!.state;
+      assert.ok(["stopped", "draining"].includes(after), after);
+      // The usage log saw it all.
+      const kinds = (await h.s.db.query<{ kind: string }>("SELECT DISTINCT kind FROM capacity_events")).rows.map((x) => x.kind);
+      for (const k of ["pod.requested", "pod.registered", "pod.stopped", "pod.rent_failed", "capacity.demand", "capacity.blocked"]) assert.ok(kinds.includes(k), `${k} in ${kinds}`);
+      const stopped = (await h.s.db.query<{ detail: { reason: string; costUsd: number } }>("SELECT detail FROM capacity_events WHERE kind = 'pod.stopped' AND pod_id = $1", [podId])).rows[0]!.detail;
+      assert.equal(stopped.reason, "budget");
+      assert.ok(stopped.costUsd >= 15);
+      await h.s.db.query("UPDATE gpu_pods SET state = 'stopped', requested_at = now() - interval '40 days', stopped_at = now() - interval '40 days' WHERE id = $1", [podId]);
+      pods.clear();
     } finally {
       await h.s.capacity?.settle();
       await m.settle();
@@ -1269,6 +1293,59 @@ describe("sessions and on-demand GPUs", () => {
     while (n < TOKEN_RATE_PER_MINUTE * 2 && (await inject({ method: "GET", url: "/v1/jobs", headers: as("busy-install") })).statusCode === 200) n++;
     assert.ok(n >= TOKEN_RATE_PER_MINUTE && n < TOKEN_RATE_PER_MINUTE + 20, String(n));
     assert.equal((await inject({ method: "GET", url: "/v1/jobs", headers: as("other-install") })).statusCode, 200);
+  });
+
+  it("keeps a usage log that outlives the jobs, and exports it", async () => {
+    await noWorkers();
+    await presetCatalog();
+    await noWorkers();
+    const { as } = await appUser();
+    const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 8, memoryBytes: 1, engineVersion: "test" } })).workerId;
+    const opened = json(await inject({ method: "POST", url: "/v1/sessions", headers: as("usage-table") }));
+    const sketch = { inline: PNG_1x1.toString("base64"), contentType: "image/png" };
+    const sub = await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: as("usage-table"), payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch } } });
+    assert.equal(sub.statusCode, 201, sub.body);
+    const jobId = json(sub).job.id;
+    assert.equal(json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job.jobId, jobId);
+    await inject({ method: "POST", url: `/v1/worker/jobs/${jobId}/fail`, headers: worker, payload: { workerId, workerSeconds: 1, code: "job.timeout", detail: "x" } });
+    const row = (await h.s.db.query("SELECT * FROM usage_jobs WHERE job_id = $1", [jobId])).rows[0];
+    assert.ok(row, "logged when it finished");
+    assert.equal(row.session_id, opened.session.id);
+    assert.deepEqual(
+      [row.preset, row.preset_variant, row.latency, row.op, row.width, row.height, row.steps, row.sampler, row.controlnet, row.lora, row.models, row.state],
+      ["sketch_to_scene", "map", "interactive", "txt2img", 512, 512, 4, "lcm", true, 1, 5, "failed"],
+    );
+    assert.equal(row.error_code, "job.timeout");
+    // Closing the session logs it; deleting the end user's data leaves the log.
+    await inject({ method: "DELETE", url: `/v1/sessions/${opened.session.id}`, headers: as("usage-table") });
+    assert.equal((await h.s.db.query("SELECT 1 FROM usage_sessions WHERE session_id = $1", [opened.session.id])).rowCount, 1);
+    await h.s.db.query("DELETE FROM jobs WHERE id = $1", [jobId]);
+    assert.equal((await h.s.db.query("SELECT 1 FROM usage_jobs WHERE job_id = $1", [jobId])).rowCount, 1);
+    // The export.
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { spawnSync } = await import("node:child_process");
+    const out = mkdtempSync(path.join(tmpdir(), "usage-"));
+    const r = spawnSync(process.execPath, [new URL("../src/cli/usage-report.js", import.meta.url).pathname, "--from", "2020-01-01", "--out", out, "--fixed-usd-month", "10"], {
+      env: { ...process.env, DATABASE_URL: h.s.config.databaseUrl },
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const summary = JSON.parse(readFileSync(path.join(out, "summary.json"), "utf8"));
+    assert.ok(summary.jobs.total >= 1);
+    assert.ok(summary.jobs.byError["job.timeout"] >= 1);
+    assert.ok(summary.sessions.total >= 1);
+    assert.ok(summary.cost.fixedUsd > 0);
+    const jobsCsv = readFileSync(path.join(out, "jobs.csv"), "utf8");
+    assert.match(jobsCsv.split("\n")[0]!, /^job_id,session_id,preset,preset_variant/);
+    assert.ok(!/usage-table/.test(jobsCsv + readFileSync(path.join(out, "sessions.csv"), "utf8")), "no end-user ids");
+    // The same over HTTP, for operators only.
+    assert.equal((await inject({ method: "GET", url: "/v1/admin/usage-report" })).statusCode, 401);
+    assert.equal((await inject({ method: "GET", url: "/v1/admin/usage-report", headers: { authorization: "Bearer nc_app_wrong" } })).statusCode, 401);
+    const viaHttp = await inject({ method: "GET", url: "/v1/admin/usage-report?from=2020-01-01", headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
+    assert.equal(viaHttp.statusCode, 200, viaHttp.body);
+    assert.ok(json(viaHttp).summary.jobs.total >= 1);
+    assert.match(json(viaHttp).files["jobs.csv"], /^job_id,/);
   });
 
   it("warms a starting GPU worker up: its own preset jobs on a blank sketch, ready only once it claims", async () => {

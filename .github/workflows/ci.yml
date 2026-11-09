@@ -68,8 +68,9 @@ jobs:
       - name: GPU worker image (CUDA)
         run: docker build -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS=86 -t neuracraft-worker-gpu .
 
-  # The GPU worker image the capacity manager's pods run (RUNPOD_IMAGE), published from main.
-  publish-gpu-worker:
+  # The images production runs (deploy/production), published from main: the API, the web app (Caddy)
+  # and the GPU worker the capacity manager's pods run (RUNPOD_IMAGE), all tagged with the commit.
+  publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [api-web, worker-e2e, images]
     runs-on: ubuntu-latest
@@ -82,9 +83,52 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Build and push
         run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/neuracraft-worker-gpu
-          docker build -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS="86;89" \
-            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
-            -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
-          docker push "$IMAGE:${{ github.sha }}"
-          docker push "$IMAGE:latest"
+          OWNER=ghcr.io/${{ github.repository_owner }}
+          SRC="--label org.opencontainers.image.source=https://github.com/${{ github.repository }}"
+          build() {  # image, then docker build arguments
+            local image=$OWNER/$1; shift
+            docker build $SRC -t "$image:${{ github.sha }}" -t "$image:latest" "$@" .
+            docker push "$image:${{ github.sha }}"
+            docker push "$image:latest"
+          }
+          build neuracraft-api -f deploy/api.Dockerfile --target api
+          build neuracraft-web -f deploy/api.Dockerfile --target web
+          build neuracraft-worker-gpu -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS="86;89"
+
+  # Production (docs/DEPLOY.md): copies deploy/production to the server and starts this commit's images.
+  # Skipped until the DEPLOY_HOST and DEPLOY_SSH_KEY secrets exist.
+  deploy:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    concurrency: { group: production, cancel-in-progress: false }
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.DEPLOY_HOST != ''
+      - name: Deploy
+        if: env.DEPLOY_HOST != ''
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          if [ -n "$KNOWN_HOSTS" ]; then printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts; else ssh-keyscan -T 15 "$DEPLOY_HOST" > ~/.ssh/known_hosts 2>/dev/null; fi
+          SSH="ssh -i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes deploy@$DEPLOY_HOST"
+          printf 'RUNPOD_API_KEY=%s\nANTHROPIC_API_KEY=%s\nADMIN_TOKEN=%s\n' "$RUNPOD_API_KEY" "$ANTHROPIC_API_KEY" "$ADMIN_TOKEN" > secrets.env
+          scp -i ~/.ssh/id_deploy -o BatchMode=yes deploy/production/{docker-compose.yml,Caddyfile,settings.env,deploy.sh} secrets.env "deploy@$DEPLOY_HOST:/opt/neuracraft/"
+          scp -i ~/.ssh/id_deploy -o BatchMode=yes deploy/catalog/sketch-to-scene.sh "deploy@$DEPLOY_HOST:/opt/neuracraft/catalog-sketch-to-scene.sh"
+          rm secrets.env
+          echo "$GHCR_TOKEN" | $SSH "docker login ghcr.io -u ${{ github.actor }} --password-stdin > /dev/null"
+          if $SSH "TAG=${{ github.sha }} bash /opt/neuracraft/deploy.sh"; then status=0; else status=$?; fi
+          $SSH "docker logout ghcr.io > /dev/null" || true
+          exit $status

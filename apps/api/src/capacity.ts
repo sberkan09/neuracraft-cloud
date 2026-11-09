@@ -76,6 +76,7 @@ export interface TickReport {
 export class CapacityManager {
   blocked: string | null = null; // why no pod can be rented right now (budget, no GPUs)
   private blockedUntil = 0;
+  private lastShape = "";
   private running = false;
 
   constructor(
@@ -151,19 +152,34 @@ export class CapacityManager {
     const inGrace = lastEnd !== null && now.getTime() - lastEnd.getTime() < this.cfg.graceMinutes * 60_000;
     // In the grace after the last demand, pods are kept (not drained) but not replaced either.
     wanted = Math.min(wanted, this.cfg.maxPods);
+    // Over a budget: nothing new, and the pods there are drained too (each finishes its job first).
+    const over = await this.overBudget(now);
+    if (over) {
+      this.block(over, 5 * 60_000);
+      wanted = 0;
+    } else if (this.blocked?.includes("budget")) {
+      await this.event("capacity.unblocked", null, { was: this.blocked });
+      this.blocked = null;  // a new day or month
+      this.blockedUntil = 0;
+    }
     r.wanted = wanted;
+    const shape = `${demand}/${waiting > 0}/${wanted}/${serving.length}`;
+    if (shape !== this.lastShape) {
+      this.lastShape = shape;
+      await this.event("capacity.demand", null, { sessions: demand, jobsWaiting: waiting, wanted, pods: serving.length, inGrace });
+    }
 
     // 4a. Pods to give up: never registered, dead worker, too old.
     for (const p of serving) {
       const age = (now.getTime() - p.requested_at.getTime()) / 1000;
       if ((p.state === "requested" || p.state === "starting") && age > this.cfg.startTimeoutSeconds) {
-        await this.stop(p.id, p.provider_id, "failed", "the worker did not register in time");
+        await this.stop(p.id, p.provider_id, "failed", "the worker did not register in time", "start_timeout");
         r.failed.push(p.id);
       } else if (p.state === "running" && p.seen && (now.getTime() - p.seen.getTime()) / 1000 > WORKER_GRACE_SECONDS) {
-        await this.stop(p.id, p.provider_id, "failed", "the worker stopped answering");
+        await this.stop(p.id, p.provider_id, "failed", "the worker stopped answering", "worker_dead");
         r.failed.push(p.id);
       } else if (p.state === "running" && p.ready_at && (now.getTime() - p.ready_at.getTime()) / 3600_000 > this.cfg.maxPodHours) {
-        await this.drain(p.id, p.worker_id, now);
+        await this.drain(p.id, p.worker_id, now, "max_age");
         r.drained.push(p.id);
       }
     }
@@ -173,30 +189,25 @@ export class CapacityManager {
 
     // 3. Rent or drain.
     if (count < wanted && Date.now() >= this.blockedUntil) {
-      const spent = await this.spentToday(now);
-      if (spent >= this.cfg.dailyBudgetUsd) {
-        this.block(`daily GPU budget reached (${spent.toFixed(2)} of ${this.cfg.dailyBudgetUsd} USD)`, 5 * 60_000);
-      } else {
-        while (count < wanted) {
-          const id = await this.rent();
-          if (!id) break;
-          r.rented.push(id);
-          count++;
-        }
+      while (count < wanted) {
+        const id = await this.rent();
+        if (!id) break;
+        r.rented.push(id);
+        count++;
       }
-    } else if (count > wanted && !inGrace) {
-      // Starting pods first (newest), then idle running ones.
+    } else if (count > wanted && (!inGrace || over)) {
+      // Starting pods first (newest), then idle running ones (over a budget: busy ones too).
       const extra = count - wanted;
       const candidates = [
         ...serving.filter((p) => p.state !== "running").reverse(),
-        ...serving.filter((p) => p.state === "running" && !p.busy),
+        ...serving.filter((p) => p.state === "running" && (!p.busy || over)),
       ].slice(0, extra);
       for (const p of candidates) {
         if (p.state !== "running") {
-          await this.stop(p.id, p.provider_id, "stopped");
+          await this.stop(p.id, p.provider_id, "stopped", undefined, over ? "budget" : "idle");
           r.stopped.push(p.id);
         } else {
-          await this.drain(p.id, p.worker_id, now);
+          await this.drain(p.id, p.worker_id, now, over ? "budget" : "idle");
           r.drained.push(p.id);
         }
       }
@@ -209,7 +220,7 @@ export class CapacityManager {
     );
     for (const p of draining.rows)
       if (!p.busy || now.getTime() - p.drain_at.getTime() > 10 * 60_000) {
-        await this.stop(p.id, p.provider_id, "stopped");
+        await this.stop(p.id, p.provider_id, "stopped", undefined, "drained");
         r.stopped.push(p.id);
       }
 
@@ -226,9 +237,10 @@ export class CapacityManager {
         if (!mine) {
           await this.provider.terminate(t.providerId);
           this.log("terminated an unknown pod", { providerId: t.providerId, name: t.name });
+          await this.event("pod.orphan_terminated", null, { providerId: t.providerId, name: t.name });
         } else if (t.status === "stopped") {
           // Exited or broken at the provider: give it up (the next tick rents another if needed).
-          await this.stop(mine.id, t.providerId, "failed", "the pod exited at the provider");
+          await this.stop(mine.id, t.providerId, "failed", "the pod exited at the provider", "exited");
           r.failed.push(mine.id);
         }
       }
@@ -236,6 +248,7 @@ export class CapacityManager {
       for (const p of ours.rows)
         if (!present.has(p.provider_id) && now.getTime() - p.requested_at.getTime() > 120_000) {
           await db.query(`UPDATE gpu_pods SET state = 'stopped', stopped_at = $2, error = coalesce(error, 'gone at the provider') WHERE id = $1 AND state IN ${LIVE}`, [p.id, now]);
+          await this.event("pod.stopped", p.id, { state: "stopped", reason: "gone", ...(await this.podCost(p.id)) });
           r.stopped.push(p.id);
         }
     } catch (e) {
@@ -246,14 +259,18 @@ export class CapacityManager {
   }
 
   private block(reason: string, ms: number) {
+    if (this.blocked !== reason) {
+      this.log("capacity blocked", { reason });
+      void this.event("capacity.blocked", null, { reason });
+    }
     this.blocked = reason;
     this.blockedUntil = Date.now() + ms;
-    this.log("capacity blocked", { reason });
   }
 
   private async rent(): Promise<string | null> {
     const row = await this.db.query<{ id: string }>(`INSERT INTO gpu_pods (provider, state) VALUES ($1, 'requested') RETURNING id`, [this.provider!.name]);
     const id = row.rows[0]!.id;
+    const t0 = Date.now();
     try {
       const pod = await this.provider!.rent({ id, name: POD_PREFIX + id.slice(0, 8) });
       await this.db.query("UPDATE gpu_pods SET provider_id = $2, gpu_type = $3, region = $4, price_per_hour = $5, state = 'starting' WHERE id = $1", [
@@ -264,21 +281,24 @@ export class CapacityManager {
         pod.pricePerHour,
       ]);
       this.blocked = null;
+      await this.event("pod.requested", id, { provider: this.provider!.name, providerId: pod.providerId, gpuType: pod.gpuType, region: pod.region, pricePerHour: pod.pricePerHour, rentMs: Date.now() - t0 });
       return id;
     } catch (e) {
       await this.db.query("UPDATE gpu_pods SET state = 'failed', stopped_at = now(), error = $2 WHERE id = $1", [id, String((e as Error).message).slice(0, 500)]);
+      await this.event("pod.rent_failed", id, { unavailable: e instanceof CapacityUnavailable, error: String((e as Error).message).slice(0, 300), rentMs: Date.now() - t0 });
       if (e instanceof CapacityUnavailable) this.block("no GPU available at the provider", 60_000);
       else this.block(`renting a GPU failed: ${(e as Error).message.slice(0, 200)}`, 60_000);
       return null;
     }
   }
 
-  private async drain(id: string, workerId: string | null, now: Date) {
+  private async drain(id: string, workerId: string | null, now: Date, reason: string) {
     await this.db.query("UPDATE gpu_pods SET state = 'draining', drain_at = $2 WHERE id = $1", [id, now]);
     if (workerId) await this.db.query("UPDATE workers SET draining = true WHERE id = $1", [workerId]);
+    await this.event("pod.draining", id, { reason });
   }
 
-  private async stop(id: string, providerId: string | null, state: "stopped" | "failed", error?: string) {
+  private async stop(id: string, providerId: string | null, state: "stopped" | "failed", error: string | undefined, reason: string) {
     if (providerId) {
       try {
         await this.provider!.terminate(providerId);
@@ -289,24 +309,83 @@ export class CapacityManager {
     }
     await this.db.query("UPDATE gpu_pods SET state = $2, stopped_at = now(), error = coalesce($3, error) WHERE id = $1", [id, state, error ?? null]);
     await this.db.query("UPDATE workers SET draining = true WHERE id = (SELECT worker_id FROM gpu_pods WHERE id = $1)", [id]);
+    await this.event("pod.stopped", id, { state, reason, ...(error ? { error } : {}), ...(await this.podCost(id)) });
   }
 
-  // What pods rented since midnight (UTC) cost so far.
+  // A pod's life in numbers, for the usage log: billed seconds, cost, seconds to its worker, jobs, busy seconds.
+  private async podCost(id: string): Promise<Record<string, number | null>> {
+    const r = await this.db.query<{ seconds: number; cost: string | null; ready: number | null; jobs: string; busy: number | null }>(
+      `SELECT extract(epoch FROM coalesce(p.stopped_at, now()) - p.requested_at)::float8 AS seconds,
+              p.price_per_hour * extract(epoch FROM coalesce(p.stopped_at, now()) - p.requested_at) / 3600 AS cost,
+              extract(epoch FROM p.ready_at - p.requested_at)::float8 AS ready,
+              (SELECT count(*) FROM jobs j WHERE j.worker_id = p.worker_id) AS jobs,
+              (SELECT sum(extract(epoch FROM j.finished_at - coalesce(j.started_at, j.claimed_at)))::float8 FROM jobs j WHERE j.worker_id = p.worker_id AND j.finished_at IS NOT NULL) AS busy
+         FROM gpu_pods p WHERE p.id = $1`,
+      [id],
+    );
+    const p = r.rows[0];
+    if (!p) return {};
+    return { seconds: Math.round(p.seconds), costUsd: p.cost === null ? null : Number(Number(p.cost).toFixed(4)), readySeconds: p.ready, jobs: Number(p.jobs), busySeconds: p.busy };
+  }
+
+  // The usage log (013_usage_log.sql); never fails the tick.
+  private async event(kind: string, podId: string | null, detail: Record<string, unknown>): Promise<void> {
+    await capacityEvent(this.db, kind, podId, detail);
+  }
+
+  // What pods cost since midnight / the first of the month (UTC), running ones up to now.
   async spentToday(now = new Date()): Promise<number> {
+    return this.spentSince("day", now);
+  }
+  async spentThisMonth(now = new Date()): Promise<number> {
+    return this.spentSince("month", now);
+  }
+  private async spentSince(unit: "day" | "month", now: Date): Promise<number> {
     const r = await this.db.query<{ usd: string | null }>(
-      `SELECT sum(price_per_hour * extract(epoch FROM coalesce(stopped_at, $1) - greatest(requested_at, date_trunc('day', $1::timestamptz))) / 3600) AS usd
-         FROM gpu_pods WHERE price_per_hour IS NOT NULL AND coalesce(stopped_at, $1) > date_trunc('day', $1::timestamptz)`,
-      [now],
+      `SELECT sum(price_per_hour * extract(epoch FROM coalesce(stopped_at, $1) - greatest(requested_at, date_trunc($2, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')) / 3600) AS usd
+         FROM gpu_pods WHERE price_per_hour IS NOT NULL AND coalesce(stopped_at, $1) > date_trunc($2, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+      [now, unit],
     );
     return Number(r.rows[0]?.usd ?? 0);
+  }
+
+  // Why no GPU may be rented or kept now, if a budget is used up.
+  private async overBudget(now: Date): Promise<string | null> {
+    const day = await this.spentToday(now);
+    if (day >= this.cfg.dailyBudgetUsd) return `daily GPU budget reached (${day.toFixed(2)} of ${this.cfg.dailyBudgetUsd} USD)`;
+    if (Number.isFinite(this.cfg.monthlyBudgetUsd)) {
+      const month = await this.spentThisMonth(now);
+      if (month >= this.cfg.monthlyBudgetUsd) return `monthly GPU budget reached (${month.toFixed(2)} of ${this.cfg.monthlyBudgetUsd} USD)`;
+    }
+    return null;
+  }
+}
+
+export async function capacityEvent(db: Db, kind: string, podId: string | null, detail: Record<string, unknown>): Promise<void> {
+  try {
+    await db.query("INSERT INTO capacity_events (kind, pod_id, detail) VALUES ($1, $2, $3)", [kind, podId, JSON.stringify(detail)]);
+  } catch {
+    // best effort
   }
 }
 
 // A pod's worker registered: the pod is running.
 export async function podWorkerRegistered(db: Db, podId: unknown, workerId: string): Promise<void> {
   if (typeof podId !== "string" || !/^[0-9a-f-]{36}$/.test(podId)) return;
-  await db.query("UPDATE gpu_pods SET worker_id = $2, state = 'running', ready_at = coalesce(ready_at, now()) WHERE id = $1 AND state IN ('requested', 'starting', 'running')", [
-    podId,
-    workerId,
-  ]);
+  const r = await db.query<{ seconds: number }>(
+    `UPDATE gpu_pods SET worker_id = $2, state = 'running', ready_at = coalesce(ready_at, now()) WHERE id = $1 AND state IN ('requested', 'starting', 'running')
+     RETURNING extract(epoch FROM ready_at - requested_at)::float8 AS seconds`,
+    [podId, workerId],
+  );
+  if (r.rows[0]) await capacityEvent(db, "pod.registered", podId, { workerId, secondsSinceRequest: r.rows[0].seconds });
+}
+
+// A warming worker's first claim: its warm-up is over.
+export async function workerWarmed(db: Db, workerId: string): Promise<void> {
+  const r = await db.query<{ seconds: number; pod: string | null }>(
+    `UPDATE workers SET warming = false, warmed_at = now() WHERE id = $1 AND warming
+     RETURNING extract(epoch FROM now() - registered_at)::float8 AS seconds, (SELECT id FROM gpu_pods WHERE worker_id = $1 ORDER BY requested_at DESC LIMIT 1) AS pod`,
+    [workerId],
+  );
+  if (r.rows[0]) await capacityEvent(db, "pod.warm", r.rows[0].pod, { workerId, warmupSeconds: r.rows[0].seconds });
 }

@@ -1,0 +1,47 @@
+#cloud-config
+# Paste into Hetzner Cloud's "Cloud config" box when creating the server (Ubuntu 24.04; docs/DEPLOY.md).
+# It installs Docker, opens only SSH and HTTP(S), adds a deploy user (with the same SSH key as root)
+# that GitHub Actions uses, generates the internal secrets once, and backs the database up nightly.
+# Nothing in it is secret.
+package_update: true
+package_upgrade: true
+packages: [docker.io, docker-compose-v2, git, curl, ufw, unattended-upgrades]
+
+users:
+  - default
+  - name: deploy
+    groups: [docker]
+    shell: /bin/bash
+    lock_passwd: true
+
+write_files:
+  - path: /etc/cron.d/neuracraft-backup
+    content: |
+      # The database, every night, one file per weekday (kept 7 days; Hetzner's server backups copy them too).
+      30 3 * * * deploy cd /opt/neuracraft && docker compose exec -T db pg_dump -U nc neuracraft | gzip > backups/db-$(date +\%a).sql.gz
+  - path: /etc/ssh/sshd_config.d/90-neuracraft.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+
+runcmd:
+  # 2 GB of swap: the server has 4 GB of memory.
+  - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  # The deploy user logs in with root's key (the one chosen in Hetzner's form).
+  - install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+  - install -m 600 -o deploy -g deploy /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+  - install -d -m 750 -o deploy -g deploy /opt/neuracraft /opt/neuracraft/backups /opt/neuracraft/models
+  # Secrets that never leave the server, made once.
+  - |
+    if [ ! -f /opt/neuracraft/internal.env ]; then
+      umask 077
+      printf 'POSTGRES_PASSWORD=%s\nSIGNING_KEY=%s\nWORKER_TOKEN=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > /opt/neuracraft/internal.env
+      chown deploy:deploy /opt/neuracraft/internal.env
+    fi
+  - ufw default deny incoming
+  - ufw allow OpenSSH
+  - ufw allow 80/tcp
+  - ufw allow 443
+  - ufw --force enable
+  - systemctl enable --now docker
+  - systemctl restart ssh

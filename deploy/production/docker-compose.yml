@@ -1,0 +1,77 @@
+# Production on one small server (docs/DEPLOY.md): Postgres, the API and Caddy (the web app, HTTPS).
+# GPU workers are rented on demand from Runpod by the API (CAPACITY_PROVIDER=runpod); no CPU worker.
+# deploy.sh writes .env (settings.env + internal.env + secrets.env + TAG) and runs this file.
+name: neuracraft
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: neuracraft
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "nc"]
+      interval: 2s
+      retries: 30
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  api:
+    image: ghcr.io/sberkan09/neuracraft-api:${TAG:?}
+    restart: unless-stopped
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      DATABASE_URL: postgres://nc:${POSTGRES_PASSWORD}@db:5432/neuracraft
+      STORAGE_DIR: /data/storage
+      STORAGE_URL_PREFIX: https://${SITE_DOMAIN:?}
+      SIGNING_KEY: ${SIGNING_KEY:?}
+      WORKER_TOKENS: ${WORKER_TOKEN:?}
+      ADMIN_TOKENS: ${ADMIN_TOKEN:-}
+      SECURE_COOKIES: "1"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PROMPT_MODEL: ${PROMPT_MODEL:-claude-haiku-5-5}
+      MODERATION_THRESHOLDS: ${MODERATION_THRESHOLDS:-nsfw=0.5}
+      INTERACTIVE_REGIONS: ${INTERACTIVE_REGIONS:-eu}
+      INTERACTIVE_ON_CPU: "0"
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-45}
+      CAPACITY_PROVIDER: ${CAPACITY_PROVIDER:-}
+      CAPACITY_MAX_PODS: ${CAPACITY_MAX_PODS:-1}
+      CAPACITY_GRACE_MINUTES: ${CAPACITY_GRACE_MINUTES:-15}
+      CAPACITY_DAILY_BUDGET_USD: ${CAPACITY_DAILY_BUDGET_USD:-5}
+      CAPACITY_MONTHLY_BUDGET_USD: ${CAPACITY_MONTHLY_BUDGET_USD:-}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
+      # The pods run the GPU worker built from the same commit as this API.
+      RUNPOD_IMAGE: ghcr.io/sberkan09/neuracraft-worker-gpu:${TAG}
+      RUNPOD_GPU_TYPES: ${RUNPOD_GPU_TYPES:-}
+      RUNPOD_CLOUD: ${RUNPOD_CLOUD:-SECURE}
+      RUNPOD_DATA_CENTERS: ${RUNPOD_DATA_CENTERS:-}
+      RUNPOD_NETWORK_VOLUME_ID: ${RUNPOD_NETWORK_VOLUME_ID:-}
+      RUNPOD_WORKER_API_URL: https://${SITE_DOMAIN}
+      RUNPOD_WORKER_ENV: ${RUNPOD_WORKER_ENV:-KEEP_MODELS=8,INTERACTIVE_ONLY=1,WARMUP=1,WORKER_REGION=eu}
+    volumes:
+      - storage:/data/storage
+      - ./models:/models:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/v1/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 5s
+      retries: 30
+    # Logs hold no bodies or signed URLs (docs/PRIVACY.md); rotated, at most 100 MB.
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+
+  web:
+    image: ghcr.io/sberkan09/neuracraft-web:${TAG}
+    restart: unless-stopped
+    depends_on: { api: { condition: service_healthy } }
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+
+volumes:
+  db:
+  storage:
+  caddy:

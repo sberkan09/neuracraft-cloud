@@ -1,0 +1,17 @@
+# Production: the web app and the API on SITE_DOMAIN, with a certificate from Let's Encrypt.
+{
+	admin off
+}
+{$SITE_DOMAIN} {
+	encode gzip
+	handle /v1/* {
+		reverse_proxy api:8080 {
+			flush_interval -1
+		}
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
