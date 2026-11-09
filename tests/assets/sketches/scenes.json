@@ -22,5 +22,10 @@
  "sur": {
   "narrative": "Kale surları ve kapı. İki kulede okçular, kahramanlar yoldan kapıya yaklaşıyor.",
   "prompt": "top-down fantasy battle map, a stone castle wall with two round towers and a wooden gate with a portcullis, a dirt path leading to the gate, grass outside, tabletop RPG map, detailed painted texture"
+ },
+ "nehir-orman": {
+  "narrative": "Nehrin üzerinde ahşap bir köprü, kuzeyde sık bir orman",
+  "prompt": "top-down fantasy battle map, a wooden bridge over a river, a dense forest to the north, tabletop RPG map, detailed painted texture",
+  "source": "GM Cebi, first production run (neuracraft-cloud #42)"
  }
 }

@@ -384,7 +384,7 @@ describe("presets", () => {
     const draw = job.workflow.steps[3];
     assert.equal(draw.sampler, "lcm");
     assert.equal(draw.steps, 4);
-    assert.equal(draw.control_scale, 0.9);
+    assert.equal(draw.control_scale, 0.8);  // map mode (issue #42)
     assert.equal(draw.seed, 7);
     assert.match(draw.lora[0], /^asset:[0-9a-f-]{36}:1$/);
     assert.equal(job.workflow.steps[4].path, "scene.png");
@@ -527,12 +527,24 @@ describe("prompt step", () => {
     for (const [name, narrative, terrain] of spike)
       for (const mode of ["map", "atmosphere"] as const) {
         const w = templatePrompt(narrative, mode);
-        const st = mode === "map" ? ["top-down fantasy battle map", "tabletop RPG map"] : ["fantasy landscape illustration"];
+        const st = mode === "map" ? ["top-down tabletop RPG battle map", "bird's eye view", "detailed painted texture"] : ["fantasy landscape illustration"];
         for (const s of st) assert.ok(w.prompt.includes(s), `${name} ${mode}: ${w.prompt}`);
         assert.ok(w.prompt.includes(terrain), `${name}: ${w.prompt}`);
         assert.ok(noCreatures(w.prompt), `${name}: ${w.prompt}`);
         assert.ok(w.prompt.split(/\s+/).length <= 60);
       }
+  });
+
+  it("names the scribbled shapes as seen from above in map mode (issue #42)", async () => {
+    const { templatePrompt, styled } = await import("../src/prompts.js");
+    const map = templatePrompt("Nehrin üzerinde ahşap bir köprü, kuzeyde sık bir orman", "map").prompt;
+    for (const s of ["blue river of flowing water", "wooden plank bridge crossing the water", "round green tree canopies"]) assert.ok(map.includes(s), map);
+    const atmosphere = templatePrompt("Nehrin üzerinde ahşap bir köprü, kuzeyde sık bir orman", "atmosphere").prompt;
+    assert.ok(atmosphere.includes("a river") && !atmosphere.includes("seen from above"), atmosphere);
+    // A long scene is cut, never the style words; style words already there are not repeated.
+    const long = styled(Array.from({ length: 80 }, (_, i) => `rock${i}`).join(" "), "map");
+    assert.ok(long.startsWith("top-down tabletop RPG battle map") && long.endsWith("detailed painted texture") && long.split(/\s+/).length <= 60, long);
+    assert.equal(styled(map, "map"), map);
   });
 
   it("uses the LLM's answer, cleaned (style words, no creatures), and falls back to the template when it is slow or broken", async () => {
@@ -560,8 +572,8 @@ describe("prompt step", () => {
       answer = '{"prompt": "a wooden bridge over a misty river, a wolf pack on the far bank, evening light", "negative": "blurry"}';
       const w = await writer.write(spike[0]![1], "map");
       assert.equal(w.source, "llm");
-      assert.ok(w.prompt.startsWith("top-down fantasy battle map, a wooden bridge"), w.prompt);
-      assert.ok(w.prompt.endsWith("tabletop RPG map, detailed painted texture"), w.prompt);
+      assert.ok(w.prompt.startsWith("top-down tabletop RPG battle map, bird's eye view from directly above, orthographic, flat even daylight, a wooden bridge"), w.prompt);
+      assert.ok(w.prompt.endsWith("clear readable terrain, detailed painted texture"), w.prompt);
       assert.ok(noCreatures(w.prompt) && !w.prompt.includes("pack on"), w.prompt);
       answer = "sorry, I cannot";
       const broken = await writer.write(spike[0]![1], "map");
@@ -595,7 +607,7 @@ describe("prompt step", () => {
     const info = (await h.s.db.query("SELECT prompt_info FROM jobs WHERE id = $1", [job.id])).rows[0].prompt_info;
     assert.equal(info.narrative, spike[0]![1]);
     assert.equal(info.source, "template");
-    assert.equal(info.instructions, "sketch_to_scene/1");
+    assert.equal(info.instructions, "sketch_to_scene/2");
     assert.equal(info.prompt, draw.prompt);
     await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE id = $1", [job.id]);
     const before = Number((await h.s.db.query("SELECT count(*) AS n FROM jobs WHERE user_id = $1", [a.id])).rows[0].n);
@@ -797,7 +809,7 @@ describe("retention", () => {
     assert.ok(!(await exists(input)) && !existsSync(inputFile));
     assert.ok(await exists(output) && existsSync(outputFile));
     const row = (await h.s.db.query("SELECT prompt_info, workflow, worker_seconds, preset, scrubbed_at FROM jobs WHERE id = $1", [job.id])).rows[0];
-    assert.deepEqual(row.prompt_info, { source: "template", instructions: "sketch_to_scene/1", fallback: "no llm configured", scrubbed: true });
+    assert.deepEqual(row.prompt_info, { source: "template", instructions: "sketch_to_scene/2", fallback: "no llm configured", scrubbed: true });
     assert.ok(!JSON.stringify(row.workflow).includes("bridge") && !JSON.stringify(row.workflow).includes("Nehrin"));
     assert.equal(row.workflow.steps.find((st: { op: string }) => st.op === "txt2img").prompt, undefined);
     assert.deepEqual([row.worker_seconds, row.preset], [3, "sketch_to_scene"]);
