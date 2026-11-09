@@ -14,6 +14,10 @@ export interface WorkerCapabilities {
   region?: string;
   // Kept for interactive jobs only (INTERACTIVE_ONLY=1): a long batch job never occupies it.
   interactiveOnly?: boolean;
+  // A pod the capacity manager rented (WORKER_POD_ID).
+  podId?: string;
+  // Loads the interactive presets' models before its first claim (WARMUP=1; POST /v1/worker/warmup).
+  warmup?: boolean;
 }
 
 export interface WorkerRegisterResponse {
@@ -38,6 +42,12 @@ export interface ClaimedFile {
   entry?: string; // the bundle file the workflow gets (else the folder)
 }
 
+// Jobs a starting worker runs for itself, results discarded, so the models are loaded (and the
+// files cached) before a user's first job arrives.
+export interface WorkerWarmupResponse {
+  jobs: ClaimedJob[];
+}
+
 export interface ClaimedJob {
   jobId: string;
   workflow: unknown; // engine workflow JSON, files named "asset:<id>"
@@ -48,6 +58,7 @@ export interface ClaimedJob {
 
 export interface WorkerClaimResponse {
   job: ClaimedJob | null;
+  stop?: boolean; // the worker is draining: no more jobs (its pod is about to be stopped)
 }
 
 export interface HeartbeatRequest {

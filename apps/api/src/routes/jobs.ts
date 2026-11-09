@@ -9,6 +9,7 @@ import { balance, entry, settleJob } from "../ledger.js";
 import { cost, planFor } from "../plans.js";
 import { checkSubmittedWorkflow, type CheckedWorkflow } from "../workflow.js";
 import { checkEndUserQuota, reserveAllowance } from "../partners.js";
+import { openSession } from "./sessions.js";
 import type { JobLimits } from "@neuracraft/shared";
 import type pg from "pg";
 
@@ -78,8 +79,11 @@ export async function queueJob(
     fail(503, "job.no_3d_worker", { services: checked.features.join(", ") });
   // Interactive jobs never wait minutes for a GPU: without one seen lately (in their regions), they are
   // refused at once so the app can say "try again in a minute".
-  if (opts.latency === "interactive" && !s.config.interactiveOnCpu && !(await c.query(GPU_WORKER, [opts.regions ?? [], s.config.interactiveGraceSeconds])).rowCount)
-    fail(503, "job.no_gpu_worker");
+  // With on-demand GPUs (capacity.ts) a pod that is starting counts: the job waits for it.
+  if (opts.latency === "interactive" && !s.config.interactiveOnCpu && !(await c.query(GPU_WORKER, [opts.regions ?? [], s.config.interactiveGraceSeconds])).rowCount) {
+    const starting = s.config.capacity.provider && (await c.query("SELECT 1 FROM gpu_pods WHERE state IN ('requested', 'starting', 'running') LIMIT 1")).rowCount;
+    if (!starting) fail(503, "job.no_gpu_worker");
+  }
   await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [u.id]);  // one submission per user at a time
   const active = await c.query<{ n: string }>("SELECT count(*) AS n FROM jobs WHERE user_id = $1 AND state IN ('queued', 'leased', 'running')", [u.id]);
   if (Number(active.rows[0]!.n) >= plan.concurrentJobs * 4) fail(429, "limit.concurrent_jobs", { max: plan.concurrentJobs * 4 });
@@ -92,6 +96,14 @@ export async function queueJob(
      opts.preset?.id ?? null, opts.preset?.version ?? null, opts.promptInfo ? JSON.stringify(opts.promptInfo) : null, opts.regions ?? [], u.endUser, opts.latency ?? "batch", opts.preset?.variant ?? null],
   );
   await entry(c, u.id, "reserve", -reserve, r.rows[0]!.id);
+  // An interactive job keeps its user's session asking for capacity.
+  if (opts.latency === "interactive") {
+    const open = await openSession(c, u.id, u.endUser, s.config.sessions.expireSeconds);
+    if (open) {
+      await c.query("UPDATE app_sessions SET last_job_at = now() WHERE id = $1", [open.id]);
+      await c.query("UPDATE jobs SET session_id = $2 WHERE id = $1", [r.rows[0]!.id, open.id]);
+    }
+  }
   if (fromAllowance) await reserveAllowance(c, u.id, u.endUser!, r.rows[0]!.id, reserve);
   await publish(c, r.rows[0]!.id, { type: "state", state: "queued" });
   return r.rows[0]!;

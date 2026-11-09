@@ -69,7 +69,7 @@ export async function claim(
   return { jobId: job.id, workflow: job.workflow, limits: job.limits, files: await claimedFiles(db, storage, job.files), leaseSeconds: LEASE_SECONDS };
 }
 
-async function claimedFiles(db: Db, storage: Storage, ids: string[]): Promise<ClaimedFile[]> {
+export async function claimedFiles(db: Db, storage: Storage, ids: string[]): Promise<ClaimedFile[]> {
   if (!ids.length) return [];
   const assets = await db.query<{ id: string; kind: string; name: string; sha256: string | null; bytes: string; entry: string | null }>(
     "SELECT id, kind, name, sha256, bytes, entry FROM assets WHERE id = ANY($1::uuid[])",

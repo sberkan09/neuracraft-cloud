@@ -98,7 +98,9 @@
     "report.invalid": "This report cannot be sent ({{field}}: {{reason}}).",
     "partner.end_user_required": "This app must say which of its users the request is for (X-End-User).",
     "quota.end_user_daily": "You have used today's images ({{limit}}). More from {{resetsAt}}.",
-    "allowance.insufficient": "Not enough image credits left. Buy more in the app."
+    "allowance.insufficient": "Not enough image credits left. Buy more in the app.",
+    "session.limit": "Too many sessions are open right now (at most {{max}}).",
+    "session.closed": "This session has ended. Start a new one."
   },
   "nav": {
     "label": "Pages",

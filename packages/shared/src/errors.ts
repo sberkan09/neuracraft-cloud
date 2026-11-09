@@ -39,6 +39,8 @@ export const ErrorCodes = [
   "partner.end_user_required",
   "quota.end_user_daily",
   "allowance.insufficient",
+  "session.limit",
+  "session.closed",
   "worker.unauthorized",
   "worker.lease_lost",
   "model.unsupported",

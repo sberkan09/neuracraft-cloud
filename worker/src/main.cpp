@@ -4,7 +4,10 @@
 //
 // Environment: API_URL, WORKER_TOKEN (required); WORKER_CLASS (cpu, or gpu: runs on the GPU and
 // fails to start without one), CACHE_DIR (.data/cache), WORK_DIR (.data/jobs), CACHE_MAX_GB (20),
-// KEEP_MODELS (2: models kept loaded between jobs), ONCE=1 (at most one job, then exit: tests).
+// KEEP_MODELS (2: models kept loaded between jobs), ONCE=1 (at most one job, then exit: tests),
+// WORKER_REGION (e.g. eu), INTERACTIVE_ONLY=1 (interactive jobs only), WORKER_POD_ID (set by the API's
+// capacity manager on the pods it rents; the worker exits when the API says it is draining), WARMUP=1
+// (gpu: runs the interactive presets once on a blank input before the first claim, to load their models).
 #include "Http.h"
 #include "Job.h"
 
@@ -71,6 +74,12 @@ int main() {
     // A worker kept for interactive presets (issue #20): it never takes a long batch job, so the
     // preset's models stay loaded and a request at the table never waits behind a video.
     if (env("INTERACTIVE_ONLY") == "1") capsValue.object.push_back({"interactiveOnly", nc::json::makeBool(true)});
+    // A pod the capacity manager rented: the API marks it running once this worker registers.
+    if (const std::string pod = env("WORKER_POD_ID"); !pod.empty()) capsValue.object.push_back({"podId", makeString(pod)});
+    // WARMUP=1: load the interactive presets' models before the first claim (the API's warmup.ts; it
+    // sends jobs to GPU workers, and to CPU ones only with INTERACTIVE_ON_CPU=1).
+    const bool warmup = env("WARMUP") == "1";
+    if (warmup) capsValue.object.push_back({"warmup", nc::json::makeBool(true)});
     // Services next to a GPU worker (the engine's services/): the 3D service (NEURACRAFT_3D_URL) lets it
     // take image_to_3d jobs ("3d"), the rigging service (NEURACRAFT_RIG_URL) rig jobs ("rig"). Waits for
     // each service's model to load before saying so.
@@ -107,6 +116,31 @@ int main() {
         if (s.workerId.empty()) std::this_thread::sleep_for(std::chrono::seconds(3));
     }
     std::cerr << "neuracraft-worker: registered as " << s.workerId << " (" << cores << " cores)\n";
+    auto remember = [&](const nc::json::Value& job) {
+        if (const nc::json::Value* files = job.find("files"))
+            for (const nc::json::Value& f : files->array)
+                if (const nc::json::Value* kind = f.find("kind"); kind && kind->string == "model" && f.find("assetId")) {
+                    const std::string id = f.at("assetId").string;
+                    recentModels.erase(std::remove(recentModels.begin(), recentModels.end(), id), recentModels.end());
+                    recentModels.push_back(id);
+                }
+        while (recentModels.size() > std::max<std::size_t>(1, nc::modelCacheKeep()) * 2) recentModels.erase(recentModels.begin());
+    };
+    if (warmup && !stopping) {
+        try {
+            const HttpResponse r = api.post("/v1/worker/warmup", nc::json::dump(nc::json::makeObject({{"workerId", makeString(s.workerId)}})), 60);
+            if (r.status != 200) throw std::runtime_error(std::to_string(r.status) + " " + r.body);
+            const nc::json::Value v = nc::json::parse(r.body);
+            if (const nc::json::Value* jobs = v.find("jobs"))
+                for (const nc::json::Value& job : jobs->array) {
+                    if (stopping) break;
+                    runJob(api, s, job, true);
+                    remember(job);
+                }
+        } catch (const std::exception& e) {
+            std::cerr << "neuracraft-worker: warm-up skipped: " << e.what() << "\n";
+        }
+    }
     while (!stopping) {
         try {
             nc::json::Value loaded = nc::json::makeArray();
@@ -120,20 +154,18 @@ int main() {
                 continue;
             }
             const nc::json::Value v = nc::json::parse(r.body);
+            // Draining: the capacity manager is giving this worker's pod back. Nothing more to do.
+            if (const nc::json::Value* stop = v.find("stop"); stop && stop->type == nc::json::Value::Type::Bool && stop->boolean) {
+                std::cerr << "neuracraft-worker: told to stop (draining)\n";
+                return 0;
+            }
             const nc::json::Value* job = v.find("job");
             if (!job || !job->isObject()) {
                 if (once) return 1;
                 continue;
             }
             runJob(api, s, *job);
-            if (const nc::json::Value* files = job->find("files"))
-                for (const nc::json::Value& f : files->array)
-                    if (const nc::json::Value* kind = f.find("kind"); kind && kind->string == "model" && f.find("assetId")) {
-                        const std::string id = f.at("assetId").string;
-                        recentModels.erase(std::remove(recentModels.begin(), recentModels.end(), id), recentModels.end());
-                        recentModels.push_back(id);
-                    }
-            while (recentModels.size() > std::max<std::size_t>(1, nc::modelCacheKeep()) * 2) recentModels.erase(recentModels.begin());
+            remember(*job);
             if (once) return 0;
         } catch (const std::exception& e) {
             std::cerr << "neuracraft-worker: " << e.what() << "\n";

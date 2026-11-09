@@ -67,3 +67,24 @@ jobs:
         run: docker build -f deploy/worker.Dockerfile -t neuracraft-worker .
       - name: GPU worker image (CUDA)
         run: docker build -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS=86 -t neuracraft-worker-gpu .
+
+  # The GPU worker image the capacity manager's pods run (RUNPOD_IMAGE), published from main.
+  publish-gpu-worker:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [api-web, worker-e2e, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/neuracraft-worker-gpu
+          docker build -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS="86;89" \
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"

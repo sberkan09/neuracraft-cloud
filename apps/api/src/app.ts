@@ -10,12 +10,14 @@ import { jobRoutes } from "./routes/jobs.js";
 import { presetRoutes } from "./routes/presets.js";
 import { reportRoutes } from "./routes/reports.js";
 import { partnerRoutes } from "./routes/partner.js";
+import { sessionRoutes } from "./routes/sessions.js";
 import { tokenRoutes } from "./routes/tokens.js";
 import { storageRoutes } from "./routes/storage.js";
 import { workerRoutes } from "./routes/worker.js";
 import type { Storage } from "./storage.js";
 import { LlmPromptWriter, TemplatePromptWriter, type PromptWriter } from "./prompts.js";
 import { EngineModerator, parseThresholds, type Moderator } from "./moderation.js";
+import type { CapacityManager } from "./capacity.js";
 
 export interface Services {
   config: Config;
@@ -24,6 +26,7 @@ export interface Services {
   events: JobEvents;
   promptWriter?: PromptWriter; // default: Claude when ANTHROPIC_API_KEY is set, else the template
   moderator?: Moderator; // default: the engine's classify scores against MODERATION_THRESHOLDS
+  capacity?: CapacityManager; // on-demand GPU workers (main.ts creates it when CAPACITY_PROVIDER is set)
 }
 
 export function moderatorFor(s: Services): Moderator {
@@ -75,6 +78,7 @@ export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Pr
   await presetRoutes(app, s);
   await reportRoutes(app, s);
   await partnerRoutes(app, s);
+  await sessionRoutes(app, s);
   await tokenRoutes(app, s);
   await workerRoutes(app, s);
   await storageRoutes(app, s);
