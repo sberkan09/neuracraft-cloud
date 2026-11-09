@@ -24,7 +24,7 @@ files are in `deploy/production/`.
 
 **From GitHub:**
 - On every push to main, once CI passes, the `publish` job pushes three images to GHCR, tagged with the
-  commit: `neuracraft-api`, `neuracraft-web` and `neuracraft-worker-gpu`.
+  commit: `neuracraft-cloud-api`, `neuracraft-cloud-web` and `neuracraft-worker-gpu`.
 - The `deploy` job then copies the files to the server and runs `deploy.sh` with that tag. It is
   skipped while the `DEPLOY_HOST` secret is unset.
 - `deploy.sh`:

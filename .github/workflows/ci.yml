@@ -91,8 +91,8 @@ jobs:
             docker push "$image:${{ github.sha }}"
             docker push "$image:latest"
           }
-          build neuracraft-api -f deploy/api.Dockerfile --target api
-          build neuracraft-web -f deploy/api.Dockerfile --target web
+          build neuracraft-cloud-api -f deploy/api.Dockerfile --target api
+          build neuracraft-cloud-web -f deploy/api.Dockerfile --target web
           build neuracraft-worker-gpu -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS="86;89"
 
   # Production (docs/DEPLOY.md): copies deploy/production to the server and starts this commit's images.
