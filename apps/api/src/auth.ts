@@ -97,7 +97,7 @@ export async function createToken(
   return { id: r.rows[0]!.id, secret, prefix };
 }
 
-// Requests per minute a token may make (per API process).
+// Requests per minute a token may make (per API process; an app token: per end user).
 export const TOKEN_RATE_PER_MINUTE = 240;
 const buckets = new Map<string, { tokens: number; at: number }>();
 function takeToken(id: string): boolean {
@@ -137,7 +137,8 @@ async function tokenUser(db: Db, req: FastifyRequest, secret: string, access: Ac
     if (!END_USER.test(header as string)) fail(400, "partner.end_user_required", { reason: "1-64 of A-Z a-z 0-9 . _ : @ -" });
     endUser = header as string;
   }
-  if (!takeToken(t.token_id)) fail(429, "rate_limited");
+  // An app token is shared by every install of the app: each end user gets the rate on their own.
+  if (!takeToken(endUser ? `${t.token_id}:${endUser}` : t.token_id)) fail(429, "rate_limited");
   await db.query("UPDATE api_tokens SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')", [t.token_id]);
   return { id: t.id, email: t.email, locale: t.locale, plan: t.plan, tokenId: t.token_id, tokenKind: t.kind, scopes: t.scopes, endUser };
 }

@@ -131,6 +131,7 @@ changes.
     Without the warm-up, a game's first picture takes ~30 s; with it ~3 s, if the first sketch comes
     at least ~45 s after the session opens.
   - **Without `CAPACITY_PROVIDER`**: sessions still work, but GPU workers are started by hand.
+  - How GM Cebi uses sessions and the sketch_to_scene preset: [docs/partners/gm-cebi.md](partners/gm-cebi.md).
   Workers are cattle: any can die at any moment.
 
 ## Jobs

@@ -1262,6 +1262,15 @@ describe("sessions and on-demand GPUs", () => {
     await rp.terminate("gone");  // already gone: fine
   });
 
+  it("rate-limits an app token per end user, not for the whole app", async () => {
+    const { TOKEN_RATE_PER_MINUTE } = await import("../src/auth.js");
+    const { as } = await appUser();
+    let n = 0;  // the bucket refills a little while the loop runs
+    while (n < TOKEN_RATE_PER_MINUTE * 2 && (await inject({ method: "GET", url: "/v1/jobs", headers: as("busy-install") })).statusCode === 200) n++;
+    assert.ok(n >= TOKEN_RATE_PER_MINUTE && n < TOKEN_RATE_PER_MINUTE + 20, String(n));
+    assert.equal((await inject({ method: "GET", url: "/v1/jobs", headers: as("other-install") })).statusCode, 200);
+  });
+
   it("warms a starting GPU worker up: its own preset jobs on a blank sketch, ready only once it claims", async () => {
     await noWorkers();
     await presetCatalog();
