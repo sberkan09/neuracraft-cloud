@@ -65,6 +65,13 @@ X-End-User: <install id>        1-64 of A-Z a-z 0-9 . _ : @ -   (a random id mad
      - it becomes 512 × 512, so draw on a square canvas;
      - it shows terrain only: rivers, roads, walls, forests, buildings;
      - creatures and tokens are drawn by the app on top of the result, never sent.
+   - What reads well in `map` mode (docs/reports/sketch-to-scene.md, "Map mode seen from above"):
+     - trees as small circles or blobs become tree canopies; a road as one line or two close lines
+       keeps its course;
+     - a river drawn as two thin lines may come out as water on one side only: shade the band
+       between them, or say it in the narrative ("iki kıyı arasında akan nehir");
+     - corridors and small furniture (tables, chairs) are the weakest: they can merge into rooms or
+       turn into other round shapes. A short narrative helps more than extra strokes.
    - Answer: `201 {job}`; the job has `id` and `state`.
 4. **Wait for it**: `GET /v1/jobs/{id}/events` (server-sent events, with the same headers).
    - Each event is `data: <json>`:
