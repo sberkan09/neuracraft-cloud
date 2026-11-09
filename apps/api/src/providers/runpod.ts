@@ -59,7 +59,7 @@ export class RunpodProvider implements GpuProvider {
           name: spec.name,
           image: this.cfg.image,
           cloud: this.cfg.cloud,
-          gpu: { id: gpu, count: 1 },
+          gpu: { id: gpu, count: 1, minCudaVersion: "12.8" },  // the worker image's CUDA runtime
           disk: 30,
           env: at.volume ? { CACHE_DIR: "/runpod-volume/cache", ...env } : env,
         };
