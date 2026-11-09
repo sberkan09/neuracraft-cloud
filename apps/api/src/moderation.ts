@@ -187,6 +187,9 @@ export async function dismissReport(c: Q, id: string, operator: string, note?: s
   const rep = await openReport(c, id);
   if (rep.status !== "open") throw new Error(`report ${id} is already ${rep.status}`);
   await c.query("UPDATE reports SET status = 'dismissed', resolved_at = now(), resolved_by = $2 WHERE id = $1", [id, operator]);
+  // Nothing wrong with it: the owner sees it again once no report on it is open.
+  if (rep.asset_id)
+    await c.query("UPDATE assets SET reported_at = NULL WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM reports WHERE asset_id = $1 AND status = 'open')", [rep.asset_id]);
   await log(c, operator, "dismiss", rep, note);
 }
 

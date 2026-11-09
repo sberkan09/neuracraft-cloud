@@ -83,7 +83,8 @@ X-End-User: <install id>        1-64 of A-Z a-z 0-9 . _ : @ -   (a random id mad
 - `GET /v1/presets` lists the presets and their parameters. Check that `sketch_to_scene` is there
   with a version the app knows.
 - **Report a picture**: `POST /v1/assets/{assetId}/report` with `{reason, note?}`. The picture is
-  then hidden for everyone.
+  then hidden, from the reporter too (no download, not in the job's outputs), until a review
+  finds nothing wrong with it.
   - `reason` is one of `sexual`, `violence_gore`, `hate`, `minor_safety`, `other`.
   - `note` is at most 500 characters.
 - With the `partner:manage` token (GM Cebi's server only, no `X-End-User` header):
