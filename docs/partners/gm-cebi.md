@@ -33,8 +33,10 @@ X-End-User: <install id>        1-64 of A-Z a-z 0-9 . _ : @ -   (a random id mad
 1. **A game (or a battle map screen) starts** → `POST /v1/sessions` (no body).
    - Answer: `{session: {id, heartbeatSeconds, expiresWithoutHeartbeatSeconds, endsAt, idleMinutes}, capacity}`.
    - `capacity` is one of:
-     - `{state: "ready"}`;
-     - `{state: "warming", etaSeconds}`: a GPU is starting, and a sketch sent now waits for it;
+     - `{state: "ready", gpu?}`;
+     - `{state: "warming", etaSeconds, gpu?}`: a GPU is starting, and a sketch sent now waits for it.
+       The estimate covers the warm-up: about 75 s, or about 120 s when the GPU is in a fallback data
+       centre (`gpu.modelCache: false`), whose worker first downloads the models;
      - `{state: "unavailable", reason}`: no GPU now; offer to continue without the online feature.
    - Opening again while a session is open returns the same session (200 instead of 201).
 2. **While the app is in the foreground** → `POST /v1/sessions/{id}/heartbeat` every
@@ -72,6 +74,8 @@ X-End-User: <install id>        1-64 of A-Z a-z 0-9 . _ : @ -   (a random id mad
    - Without SSE, poll `GET /v1/jobs/{id}` about once a second.
    - The job's states: queued, leased, running, then succeeded, failed or cancelled.
 5. **Show it**: `job.outputs[0]` is `{name: "scene.png", assetId, bytes}`, a 512 × 512 PNG.
+   - `job.gpu` (`{type, region}`) says which rented GPU ran it, as `capacity.gpu` does for a session
+     (`{type, region, modelCache}`). Both are for logs and debugging; the app needs neither.
    - Get it with `GET /v1/assets/{assetId}/content`: a 302 to a signed URL, so follow the redirect.
    - Keep the picture in the app's own storage: the service deletes it after 7 days.
 6. **Cancel** a job nobody waits for anymore: `POST /v1/jobs/{id}/cancel`.

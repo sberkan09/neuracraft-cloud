@@ -37,6 +37,8 @@ export interface Job {
   outputs: JobOutput[];
   error: { code: string; detail?: string } | null;
   workerSeconds: number | null;
+  // The rented GPU the job ran on, when it ran on one (the capacity manager's pods).
+  gpu?: { type: string | null; region: string | null };
 }
 
 // The engine's WorkflowEvents::progress, as the worker reports it.
