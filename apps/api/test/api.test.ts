@@ -1316,6 +1316,30 @@ describe("sessions and on-demand GPUs", () => {
     assert.deepEqual(sent.dataCenterIds, ["EU-RO-1"]);
     assert.deepEqual(await rp.list(), [{ providerId: "pod123", name: "nc-gpu-1234abcd", status: "running" }]);
     await rp.terminate("gone");  // already gone: fine
+
+    // Nothing free in the volume's data centre: the fallback ones, without the volume.
+    const tried: any[] = [];
+    const scarce = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      tried.push(body);
+      if (body.mounts || body.gpu.id !== "NVIDIA RTX 2000 Ada Generation")
+        return new Response(JSON.stringify({ detail: "There are no longer any instances available with the requested specifications." }), { status: 400 });
+      return new Response(JSON.stringify({ id: "pod9", cost: 0.24, dataCenterId: "EUR-IS-1" }), { status: 201 });
+    }) as typeof fetch;
+    const rp2 = new RunpodProvider(
+      { ...h.s.config.capacity.runpod, apiKey: "k", image: "i", workerApiUrl: "https://api.example", workerToken: "wt", gpuTypes: ["NVIDIA RTX A5000", "NVIDIA RTX 2000 Ada Generation"], networkVolumeId: "vol1", dataCenters: ["EU-RO-1"], fallbackDataCenters: ["EUR-IS-1", "EU-SE-1"], workerEnv: {} },
+      scarce,
+    );
+    assert.deepEqual(await rp2.rent({ id: "9", name: "nc-gpu-9" }), { providerId: "pod9", gpuType: "NVIDIA RTX 2000 Ada Generation", region: "EUR-IS-1", pricePerHour: 0.24 });
+    assert.deepEqual(tried.map((b) => [b.gpu.id, b.dataCenterIds.join("/"), Boolean(b.mounts), b.env.CACHE_DIR ?? null]), [
+      ["NVIDIA RTX A5000", "EU-RO-1", true, "/runpod-volume/cache"],
+      ["NVIDIA RTX 2000 Ada Generation", "EU-RO-1", true, "/runpod-volume/cache"],
+      ["NVIDIA RTX A5000", "EUR-IS-1/EU-SE-1", false, null],
+      ["NVIDIA RTX 2000 Ada Generation", "EUR-IS-1/EU-SE-1", false, null],
+    ]);
+    const { CapacityUnavailable } = await import("../src/capacity.js");
+    const none = new RunpodProvider({ ...h.s.config.capacity.runpod, apiKey: "k", image: "i", workerApiUrl: "u", workerToken: "t", gpuTypes: ["X"], networkVolumeId: "", dataCenters: ["A"], fallbackDataCenters: ["B"], workerEnv: {} }, scarce);
+    await assert.rejects(none.rent({ id: "1", name: "n" }), (e: Error) => e instanceof CapacityUnavailable && /X in A\/B/.test(e.message));
   });
 
   it("rate-limits an app token per end user, not for the whole app", async () => {
