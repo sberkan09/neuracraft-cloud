@@ -19,7 +19,8 @@ write_files:
     content: |
       # The database, every night, one file per weekday (kept 7 days; Hetzner's server backups copy them too).
       30 3 * * * deploy cd /opt/neuracraft && docker compose exec -T db pg_dump -U nc neuracraft | gzip > backups/db-$(date +\%a).sql.gz
-  - path: /etc/ssh/sshd_config.d/90-neuracraft.conf
+  # sshd keeps the first value it reads, so this must sort before 50-cloud-init.conf.
+  - path: /etc/ssh/sshd_config.d/00-neuracraft.conf
     content: |
       PasswordAuthentication no
       PermitRootLogin prohibit-password
