@@ -25,6 +25,7 @@ export interface JobRow {
   progress: Job["progress"];
   error: Job["error"];
   worker_seconds: number | null;
+  worker_id?: string | null; // (rows read with SELECT *)
 }
 
 export async function jobJson(s: Services, row: JobRow): Promise<Job> {
@@ -48,7 +49,14 @@ export async function jobJson(s: Services, row: JobRow): Promise<Job> {
     })),
     error: row.error,
     workerSeconds: row.worker_seconds,
+    ...(await ranOn(s, row)),
   };
+}
+
+async function ranOn(s: Services, row: JobRow): Promise<{ gpu?: { type: string | null; region: string | null } }> {
+  if (!row.worker_id) return {};
+  const p = await s.db.query<{ gpu_type: string | null; region: string | null }>("SELECT gpu_type, region FROM gpu_pods WHERE worker_id = $1 ORDER BY requested_at DESC LIMIT 1", [row.worker_id]);
+  return p.rows[0] ? { gpu: { type: p.rows[0].gpu_type, region: p.rows[0].region } } : {};
 }
 
 const SERVICE_GRACE_SECONDS = 600;

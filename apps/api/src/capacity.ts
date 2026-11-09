@@ -23,6 +23,7 @@ export interface RentedPod {
   gpuType: string;
   region: string | null;
   pricePerHour: number;
+  modelCache?: boolean; // the pod mounts the shared model cache (its worker skips the download)
 }
 export interface ProviderPod {
   providerId: string;
@@ -39,27 +40,46 @@ export interface GpuProvider {
 export class CapacityUnavailable extends Error {}
 export const POD_PREFIX = "nc-gpu-";
 
-export type CapacityState = { state: "ready" } | { state: "warming"; etaSeconds: number } | { state: "unavailable"; reason: string };
+// The GPU that serves (or will serve) a session, for clients and people telling a fallback start from a slow one.
+export interface CapacityGpu {
+  type: string | null;
+  region: string | null;
+  modelCache: boolean | null; // false: a fallback data centre without the shared model cache
+}
+export type CapacityState =
+  | { state: "ready"; gpu?: CapacityGpu }
+  | { state: "warming"; etaSeconds: number; gpu?: CapacityGpu }
+  | { state: "unavailable"; reason: string };
 
 const LIVE = "('requested', 'starting', 'running', 'draining')";
 const WORKER_GRACE_SECONDS = 180; // a running pod's worker unseen this long is dead
 
 // What a session (or a submission) can expect right now, for interactive jobs in `regions`.
 export async function capacityState(db: Db, cfg: CapacityConfig, regions: string[], graceSeconds: number, manager?: CapacityManager): Promise<CapacityState> {
-  const ready = await db.query(
-    `SELECT 1 FROM workers WHERE class = 'gpu' AND NOT draining AND NOT warming AND last_seen_at > now() - make_interval(secs => $2)
-       AND (cardinality($1::text[]) = 0 OR capabilities ->> 'region' = ANY($1::text[])) LIMIT 1`,
+  const gpu = (p: { gpu_type: string | null; region: string | null; model_cache: boolean | null }): CapacityGpu => ({ type: p.gpu_type, region: p.region, modelCache: p.model_cache });
+  const ready = await db.query<{ gpu_type: string | null; region: string | null; model_cache: boolean | null; pod: string | null }>(
+    `SELECT p.id AS pod, p.gpu_type, p.region, p.model_cache FROM workers w LEFT JOIN gpu_pods p ON p.worker_id = w.id
+      WHERE w.class = 'gpu' AND NOT w.draining AND NOT w.warming AND w.last_seen_at > now() - make_interval(secs => $2)
+        AND (cardinality($1::text[]) = 0 OR w.capabilities ->> 'region' = ANY($1::text[]))
+      ORDER BY w.last_seen_at DESC LIMIT 1`,
     [regions, graceSeconds],
   );
-  if (ready.rowCount) return { state: "ready" };
-  const starting = await db.query<{ waited: number }>(
-    `SELECT extract(epoch FROM now() - requested_at)::float8 AS waited FROM gpu_pods
+  if (ready.rows[0]) return ready.rows[0].pod ? { state: "ready", gpu: gpu(ready.rows[0]) } : { state: "ready" };
+  // Starting: the oldest pod on its way, its estimate by whether it has the model cache.
+  const expected = (cache: boolean | null) =>
+    cache === true || (cache === null && Boolean(cfg.runpod.networkVolumeId)) ? cfg.expectedStartSeconds : cfg.expectedStartSecondsNoCache;
+  const starting = await db.query<{ waited: number; gpu_type: string | null; region: string | null; model_cache: boolean | null }>(
+    `SELECT extract(epoch FROM now() - requested_at)::float8 AS waited, gpu_type, region, model_cache FROM gpu_pods
       WHERE state IN ('requested', 'starting', 'running') ORDER BY requested_at LIMIT 1`,
   );
-  if (starting.rows[0]) return { state: "warming", etaSeconds: Math.max(5, Math.round(cfg.expectedStartSeconds - starting.rows[0].waited)) };
+  const s = starting.rows[0];
+  if (s) {
+    const eta = Math.max(5, Math.round(expected(s.model_cache) - s.waited));
+    return s.gpu_type ? { state: "warming", etaSeconds: eta, gpu: gpu(s) } : { state: "warming", etaSeconds: eta };
+  }
   if (!cfg.provider) return { state: "unavailable", reason: "no GPU worker" };
   if (manager?.blocked) return { state: "unavailable", reason: manager.blocked };
-  return { state: "warming", etaSeconds: cfg.expectedStartSeconds }; // the next tick rents one
+  return { state: "warming", etaSeconds: expected(null) }; // the next tick rents one
 }
 
 export interface TickReport {
@@ -273,15 +293,16 @@ export class CapacityManager {
     const t0 = Date.now();
     try {
       const pod = await this.provider!.rent({ id, name: POD_PREFIX + id.slice(0, 8) });
-      await this.db.query("UPDATE gpu_pods SET provider_id = $2, gpu_type = $3, region = $4, price_per_hour = $5, state = 'starting' WHERE id = $1", [
+      await this.db.query("UPDATE gpu_pods SET provider_id = $2, gpu_type = $3, region = $4, price_per_hour = $5, model_cache = $6, state = 'starting' WHERE id = $1", [
         id,
         pod.providerId,
         pod.gpuType,
         pod.region,
         pod.pricePerHour,
+        pod.modelCache ?? null,
       ]);
       this.blocked = null;
-      await this.event("pod.requested", id, { provider: this.provider!.name, providerId: pod.providerId, gpuType: pod.gpuType, region: pod.region, pricePerHour: pod.pricePerHour, rentMs: Date.now() - t0 });
+      await this.event("pod.requested", id, { provider: this.provider!.name, providerId: pod.providerId, gpuType: pod.gpuType, region: pod.region, pricePerHour: pod.pricePerHour, modelCache: pod.modelCache ?? null, rentMs: Date.now() - t0 });
       return id;
     } catch (e) {
       await this.db.query("UPDATE gpu_pods SET state = 'failed', stopped_at = now(), error = $2 WHERE id = $1", [id, String((e as Error).message).slice(0, 500)]);

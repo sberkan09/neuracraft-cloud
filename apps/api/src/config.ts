@@ -42,7 +42,8 @@ export interface CapacityConfig {
   maxPods: number;
   graceMinutes: number; // pods stay this long after the last session stopped asking
   startTimeoutSeconds: number; // a pod whose worker has not registered by then is given up
-  expectedStartSeconds: number; // what apps are told to expect while a pod starts
+  expectedStartSeconds: number; // what apps are told to expect while a pod with the model cache starts
+  expectedStartSecondsNoCache: number; // ... and one without it (a fallback data centre: the worker downloads the models)
   maxPodHours: number; // a pod is replaced after this long
   dailyBudgetUsd: number; // no GPU pods once today's pods cost this much (UTC days)
   monthlyBudgetUsd: number; // the same for the month (Infinity: no limit)
@@ -104,7 +105,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       maxPods: Number(env.CAPACITY_MAX_PODS ?? 3),
       graceMinutes: Number(env.CAPACITY_GRACE_MINUTES ?? 15),
       startTimeoutSeconds: Number(env.CAPACITY_START_TIMEOUT_SECONDS ?? 600),
-      expectedStartSeconds: Number(env.CAPACITY_EXPECTED_START_SECONDS ?? 90),
+      expectedStartSeconds: Number(env.CAPACITY_EXPECTED_START_SECONDS ?? 75),
+      expectedStartSecondsNoCache: Number(env.CAPACITY_EXPECTED_START_SECONDS_NO_CACHE ?? 120),
       maxPodHours: Number(env.CAPACITY_MAX_POD_HOURS ?? 12),
       dailyBudgetUsd: Number(env.CAPACITY_DAILY_BUDGET_USD ?? 10),
       monthlyBudgetUsd: env.CAPACITY_MONTHLY_BUDGET_USD ? Number(env.CAPACITY_MONTHLY_BUDGET_USD) : Infinity,

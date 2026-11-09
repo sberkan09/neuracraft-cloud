@@ -68,7 +68,7 @@ export class RunpodProvider implements GpuProvider {
         if (at.volume) body.mounts = { network: [{ volumeId: volume, path: "/runpod-volume" }] };
         const r = await this.call("POST", "/v2/pods", body);
         if (r.status === 201 || r.status === 200) {
-          return { providerId: String(r.json.id), gpuType: gpu, region: r.json.dataCenterId ?? null, pricePerHour: Number(r.json.cost ?? 0) };
+          return { providerId: String(r.json.id), gpuType: gpu, region: r.json.dataCenterId ?? null, pricePerHour: Number(r.json.cost ?? 0), modelCache: at.volume };
         }
         const detail = String(r.json?.detail ?? r.json?.title ?? r.status);
         // No machine with this GPU there right now: try the next kind (then the next data centres).

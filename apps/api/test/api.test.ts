@@ -1173,7 +1173,7 @@ describe("sessions and on-demand GPUs", () => {
         if (fail === "capacity") throw new CapacityUnavailable("no GPUs");
         const providerId = `fake-${++n}`;
         pods.set(providerId, { name: spec.name, status: "starting" });
-        return { providerId, gpuType: "RTX A5000", region: "EU-RO-1", pricePerHour: 0.27 };
+        return { providerId, gpuType: "RTX A5000", region: "EU-RO-1", pricePerHour: 0.27, modelCache: false };
       },
       terminate: async (id: string) => void pods.delete(id),
       list: async () => [...pods.entries()].map(([providerId, p]) => ({ providerId, ...p })),
@@ -1202,7 +1202,9 @@ describe("sessions and on-demand GPUs", () => {
       assert.equal(pods.size, 1);
       const hb = json(await inject({ method: "POST", url: `/v1/sessions/${opened.session.id}/heartbeat`, headers: as("table-1") }));
       assert.equal(hb.capacity.state, "warming");
-      assert.ok(hb.capacity.etaSeconds > 0 && hb.capacity.etaSeconds <= 90);
+      // Without the model cache (a fallback data centre) the estimate is the longer one, and says which GPU it is.
+      assert.ok(hb.capacity.etaSeconds > h.s.config.capacity.expectedStartSeconds && hb.capacity.etaSeconds <= h.s.config.capacity.expectedStartSecondsNoCache, String(hb.capacity.etaSeconds));
+      assert.deepEqual(hb.capacity.gpu, { type: "RTX A5000", region: "EU-RO-1", modelCache: false });
 
       // A job while the pod starts waits for it (no job.no_gpu_worker) and keeps the session asking.
       const sub = await inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: as("table-1"), payload: { params: { mode: "map", prompt: "a bridge" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } } });
@@ -1214,8 +1216,14 @@ describe("sessions and on-demand GPUs", () => {
       const workerId = json(await inject({ method: "POST", url: "/v1/worker/register", headers: worker, payload: { class: "gpu", cores: 8, memoryBytes: 1, engineVersion: "test", interactiveOnly: true, podId: live[0].id } })).workerId;
       const pod = (await h.s.db.query("SELECT state, worker_id FROM gpu_pods WHERE id = $1", [live[0].id])).rows[0];
       assert.deepEqual([pod.state, pod.worker_id], ["running", workerId]);
-      assert.equal(json(await inject({ method: "POST", url: `/v1/sessions/${opened.session.id}/heartbeat`, headers: as("table-1") })).capacity.state, "ready");
+      assert.deepEqual(json(await inject({ method: "POST", url: `/v1/sessions/${opened.session.id}/heartbeat`, headers: as("table-1") })).capacity, {
+        state: "ready",
+        gpu: { type: "RTX A5000", region: "EU-RO-1", modelCache: false },
+      });
       assert.deepEqual((await m.tick())!.rented, []);  // one session: one pod
+      // The job ran on that pod: its JSON says which GPU.
+      assert.equal(json(await inject({ method: "POST", url: "/v1/worker/claim", headers: worker, payload: { workerId, loadedModels: [], waitSeconds: 0 } })).job.jobId, json(sub).job.id);
+      assert.deepEqual(json(await inject({ method: "GET", url: `/v1/jobs/${json(sub).job.id}`, headers: as("table-1") })).job.gpu, { type: "RTX A5000", region: "EU-RO-1" });
       await h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE id = $1", [json(sub).job.id]);
 
       // The session ends: the pod stays through the grace, then drains and is stopped.
@@ -1308,7 +1316,7 @@ describe("sessions and on-demand GPUs", () => {
       fakeFetch,
     );
     const pod = await rp.rent({ id: "1234abcd-0000-0000-0000-000000000000", name: "nc-gpu-1234abcd" });
-    assert.deepEqual(pod, { providerId: "pod123", gpuType: "NVIDIA RTX A4000", region: "EU-RO-1", pricePerHour: 0.25 });
+    assert.deepEqual(pod, { providerId: "pod123", gpuType: "NVIDIA RTX A4000", region: "EU-RO-1", pricePerHour: 0.25, modelCache: true });
     const sent = calls[1]!.body;
     assert.equal(calls[1]!.url, "https://api.runpod.io/v2/pods");
     assert.deepEqual(sent.env, { KEEP_MODELS: "8", INTERACTIVE_ONLY: "1", API_URL: "https://api.example", WORKER_TOKEN: "wt", WORKER_CLASS: "gpu", WORKER_POD_ID: "1234abcd-0000-0000-0000-000000000000", CACHE_DIR: "/runpod-volume/cache" });
@@ -1330,7 +1338,7 @@ describe("sessions and on-demand GPUs", () => {
       { ...h.s.config.capacity.runpod, apiKey: "k", image: "i", workerApiUrl: "https://api.example", workerToken: "wt", gpuTypes: ["NVIDIA RTX A5000", "NVIDIA RTX 2000 Ada Generation"], networkVolumeId: "vol1", dataCenters: ["EU-RO-1"], fallbackDataCenters: ["EUR-IS-1", "EU-SE-1"], workerEnv: {} },
       scarce,
     );
-    assert.deepEqual(await rp2.rent({ id: "9", name: "nc-gpu-9" }), { providerId: "pod9", gpuType: "NVIDIA RTX 2000 Ada Generation", region: "EUR-IS-1", pricePerHour: 0.24 });
+    assert.deepEqual(await rp2.rent({ id: "9", name: "nc-gpu-9" }), { providerId: "pod9", gpuType: "NVIDIA RTX 2000 Ada Generation", region: "EUR-IS-1", pricePerHour: 0.24, modelCache: false });
     assert.deepEqual(tried.map((b) => [b.gpu.id, b.dataCenterIds.join("/"), Boolean(b.mounts), b.env.CACHE_DIR ?? null]), [
       ["NVIDIA RTX A5000", "EU-RO-1", true, "/runpod-volume/cache"],
       ["NVIDIA RTX 2000 Ada Generation", "EU-RO-1", true, "/runpod-volume/cache"],
