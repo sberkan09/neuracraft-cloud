@@ -99,7 +99,7 @@ jobs:
           }
           build neuracraft-cloud-api -f deploy/api.Dockerfile --target api
           build neuracraft-cloud-web -f deploy/api.Dockerfile --target web
-          build neuracraft-worker-gpu -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS="86;89"
+          build neuracraft-worker-gpu -f deploy/worker-gpu.Dockerfile --build-arg CUDA_ARCHS="86;89;120"
 
   # Production (docs/DEPLOY.md): copies deploy/production to the server and starts this commit's images.
   # Skipped until the DEPLOY_HOST and DEPLOY_SSH_KEY secrets exist.
