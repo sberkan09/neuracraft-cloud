@@ -18,7 +18,7 @@ services:
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 
   api:
-    image: ghcr.io/sberkan09/neuracraft-api:${TAG:?}
+    image: ghcr.io/sberkan09/neuracraft-cloud-api:${TAG:?}
     restart: unless-stopped
     depends_on: { db: { condition: service_healthy } }
     environment:
@@ -60,7 +60,7 @@ services:
     logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
   web:
-    image: ghcr.io/sberkan09/neuracraft-web:${TAG}
+    image: ghcr.io/sberkan09/neuracraft-cloud-web:${TAG}
     restart: unless-stopped
     depends_on: { api: { condition: service_healthy } }
     environment:
