@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Actions → CI → Run workflow (on main): tests, publish and deploy again without a new commit.
+  workflow_dispatch:
 
 jobs:
   api-web:
@@ -71,7 +73,7 @@ jobs:
   # The images production runs (deploy/production), published from main: the API, the web app (Caddy)
   # and the GPU worker the capacity manager's pods run (RUNPOD_IMAGE), all tagged with the commit.
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [api-web, worker-e2e, images]
     runs-on: ubuntu-latest
     permissions:

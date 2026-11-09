@@ -81,6 +81,7 @@ GitHub → Settings → Secrets and variables → Actions:
 
 ## Day to day
 
+- **Deploying again without a new commit:** GitHub → Actions → CI → Run workflow (branch main).
 - **Logs:** `docker compose logs -f api`.
 - **Capacity:** `docker compose exec db psql -U nc neuracraft -c "SELECT at, kind, detail FROM capacity_events ORDER BY at DESC LIMIT 20"`.
 - **Usage export:** docs/USAGE_LOG.md.
