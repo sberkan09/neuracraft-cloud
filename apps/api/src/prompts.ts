@@ -81,6 +81,7 @@ const FROM_ABOVE: Record<string, string> = {
   "a dirt road": "a brown dirt road",
   "a footpath": "a narrow dirt footpath",
   "houses": "house roofs seen from above",
+  "wooden tables": "round wooden tables seen from above",
   "a small village": "village house roofs seen from above",
   "large boulders": "grey boulders seen from above",
   "a castle": "castle walls and towers seen from above",

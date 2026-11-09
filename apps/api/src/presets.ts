@@ -93,9 +93,9 @@ const sketchToScene: Preset = {
       height: 512,
       controlnet: asset(m["controlnet-scribble"]!),
       control: "lines",
-      // 0.9: rough sketches (a wobbly road, a dungeon's walls) lose their layout below ~0.75, and what a
-      // stroke becomes is decided by the words (prompts.ts, map mode; issue #42), not by a weaker control.
-      control_scale: 0.9,
+      // Map 0.8 (issue #42): at 0.9 circles came out as nuts and lanterns even with the map-mode words;
+      // below ~0.75 rough sketches (a wobbly road) lost their layout. docs/reports/sketch-to-scene.md.
+      control_scale: map ? 0.8 : 0.9,
       tiny_vae: asset(m.taesd!),
       out: "scene",
     };

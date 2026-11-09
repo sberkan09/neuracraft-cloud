@@ -14,7 +14,7 @@ const M = process.env.MODELS ?? "/models";
 const NC = process.env.NC ?? "NeuraCraft";
 const SK = `${root}/tests/assets/sketches`;
 const [out = "map-check", ...only] = process.argv.slice(2);
-const scales = (process.env.CONTROL ?? "0.9").split(",").map(Number); // several: one picture per scale
+const scales = (process.env.CONTROL ?? "0.8").split(",").map(Number); // several: one picture per scale
 const scenes = JSON.parse(readFileSync(`${SK}/scenes.json`, "utf8"));
 mkdirSync(out, { recursive: true });
 const steps = [];

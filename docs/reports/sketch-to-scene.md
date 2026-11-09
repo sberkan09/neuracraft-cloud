@@ -37,6 +37,39 @@ with the engine's CUDA backend, and the catalog models (`deploy/gpu-check/pod.sh
 - **Atmosphere mode** is prettier but freely perspective. That is expected; it is the mode for mood,
   not for tokens.
 
+### Map mode seen from above (issue #42, 2026-11-10)
+
+GM Cebi's first production picture was dark and side-on: circles became nuts, a river's banks a
+walkway. The changes:
+- **Style words**: the map style now leads with "top-down tabletop RPG battle map, bird's eye view
+  from directly above, orthographic, flat even daylight". The negatives add "isometric, side view,
+  very dark, vignette, heavy shadows, grid".
+- **Shapes named from above**: a scribble does not say what a circle or two wavy lines are, so the
+  words do.
+  - The template writes "round green tree canopies … seen from above", "a narrow blue river of
+    flowing water between two grassy banks", "house roofs seen from above", and so on.
+  - The LLM gets the same rule (instructions `sketch_to_scene/2`).
+- **ControlNet 0.9 → 0.8** in map mode. At 0.9, circles stayed objects even with the new words.
+  At 0.7 and below, rough sketches (a wobbly road) lost their layout.
+
+![GM Cebi's sketch, the production picture, the new one](../images/map_topdown_before_after.jpg)
+
+![ControlNet strength 0.7 / 0.8 / 0.9 with the new prompts](../images/map_topdown_control_scale.jpg)
+
+How these were made:
+- `deploy/gpu-check/map-check.mjs`: the production prompt and settings, run with the engine CLI,
+  on a CPU, about 90 s a picture.
+- Same seed (1234) in every picture.
+
+**Still open**
+- **The river band**: a river drawn as two lines comes out as water on one side of them, not as a
+  band between them.
+- **The dungeon**: the L-shaped corridor becomes a square room.
+- **Tavern tables**: they become green domes.
+- **What could help next**:
+  - in the app, a water brush that fills the river, and a legend ("circle = tree");
+  - real GM Cebi sketches added to `tests/assets/sketches`, so this check covers what GMs draw.
+
 ### Battle-map models with a usable license
 
 The spike found the base model to be the biggest quality lever, so we looked for top-down or

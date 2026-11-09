@@ -384,7 +384,7 @@ describe("presets", () => {
     const draw = job.workflow.steps[3];
     assert.equal(draw.sampler, "lcm");
     assert.equal(draw.steps, 4);
-    assert.equal(draw.control_scale, 0.9);
+    assert.equal(draw.control_scale, 0.8);  // map mode (issue #42)
     assert.equal(draw.seed, 7);
     assert.match(draw.lora[0], /^asset:[0-9a-f-]{36}:1$/);
     assert.equal(job.workflow.steps[4].path, "scene.png");
