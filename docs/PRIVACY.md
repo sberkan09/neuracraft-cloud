@@ -10,6 +10,9 @@ code it describes: `apps/api/src/retention.ts`, `moderation.ts`, `prompts.ts`.
 | --- | --- | --- | --- |
 | Account | email, password hash (scrypt), language, plan | until the account is deleted | the user; operators |
 | Partner end user | an opaque id chosen by the partner app (an install id); no email, no store account | until the partner deletes it | the partner app acting for that end user |
+| Signed-in partner end user | a random id (`eu_…`), an HMAC of the normalized email address (never the address itself), sign-up and last-seen times, blocked or not | until the end user deletes their account or the partner deletes them | the end user (`GET /v1/me`); the partner's server |
+| Sign-in codes | an HMAC of the address, a hash of the 6-digit code, attempts | **1 day** (valid for 10 minutes) | nobody: only checked |
+| Sign-in tokens | hashes of access tokens (1 hour) and refresh tokens (90 days, renewed on use) | until 1 day after they expire or are revoked | nobody: only checked |
 | Preset input | the sketch (PNG) | **24 hours** after the job is submitted | its owner; operators while a report is open |
 | Narrative and prompts | "Nehrin üzerinde ahşap bir köprü", the English prompt written from it | until **24 hours** after the job finishes | its owner (job details); operators while a report is open |
 | Preset result | the generated scene (PNG) | **7 days** | its owner; operators while a report is open |
@@ -34,6 +37,10 @@ storage URLs.
   - `DELETE /v1/assets/:id` removes one file.
   - `DELETE /v1/me` (password confirmation) deletes the account and everything it owns. The rows go at
     once; the stored bytes go within two hours.
+- **By a signed-in end user**: `DELETE /v1/me` with their access token deletes their identity,
+  everything stored for them and all their tokens, as `DELETE /v1/partner/end-users/:id` does. This
+  is the in-app account deletion the app stores require. Signing in again with the same address makes
+  a new end user.
 - **By a partner**: `DELETE /v1/partner/end-users/:id` deletes everything stored for one end user.
   The partner's server can call it, or the app for its own end user, for example from a "delete my
   data" button. Running jobs are cancelled. A second call finds nothing.
@@ -72,6 +79,7 @@ first if any of them changes.
 | Cloudflare, Inc. | file storage (R2), TLS and DNS | stored files; request metadata | EU (R2 jurisdiction); global edge |
 | Hetzner Online GmbH | servers for the API, database and CPU workers | everything the service stores | Germany |
 | Runpod, Inc. | GPU servers for image generation | a job's inputs and prompt while it runs | EU / EEA; US only when allowed |
+| Brevo (France) | emailing sign-in codes to partner apps' end users | the email address, the code and the app's name, for sending only | EU. Brevo keeps its own sending logs for a limited time |
 | Anthropic, PBC | writing the English prompt from a narrative (Claude) | the narrative text, without account or end-user ids | US. Anthropic does not train on API data and keeps API inputs for a limited time for abuse monitoring |
 | Payment provider (merchant of record: Paddle, Lemon Squeezy or Dodo, chosen at sign-up) | selling credits to NeuraCraft's own users | email, country, purchase | the provider's regions |
 

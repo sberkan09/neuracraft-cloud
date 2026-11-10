@@ -233,6 +233,20 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
       before anything is reserved (`allowance.insufficient`, 402).
     - **Billing**: the partner still pays NeuraCraft for every job from its own account ledger.
     - **Visibility**: the usage endpoint shows the balance and the entries.
+  - **Signed-in end users** (issue #48; `apps/api/src/endusers.ts`): a shipped app token is extractable
+    and `X-End-User` is self-asserted, so apps without a server sign their end users in instead.
+    - **Client**: the app ships a public client id (`cli/partner-client.js`), which grants nothing.
+    - **Sign-in**: the end user gets a 6-digit code by email (`POST /v1/auth/email/start`, then
+      `/verify`; `mailer.ts`, Brevo). The answer is an access token `nc_eu_…` (1 hour) and a refresh
+      token `nc_rt_…` (90 days, rotated on every use, a reused one revokes its family).
+    - **Identity**: an identity is HMAC(`SIGNING_KEY`, normalized address) per partner; the address
+      is not stored. Its id `eu_…` fills the same `end_user` column, so quotas, allowances, ownership
+      and deletion are unchanged.
+    - **Limits**: codes are limited per address and per IP. `--partner-daily-jobs` caps all end users
+      together (`quota.partner_daily`). Partners block end users (`POST /v1/partner/end-users/:id/block`).
+    - **Account**: `GET /v1/me` shows the end user and today's quota; `DELETE /v1/me` deletes them.
+    - **Switch-over**: `--require-end-user-tokens on` stops the partner's app tokens from acting for end
+      users (`auth.end_user_token_required`).
 * **User models**: the uploader declares the license and confirms they may use it; private to them;
   removed on a valid takedown notice.
 

@@ -2,6 +2,8 @@
 //   GET    /v1/partner/end-users/:id/usage  jobs, cost, today's quota
 //   DELETE /v1/partner/end-users/:id        everything stored for that end user
 //   POST   /v1/partner/end-users/:id/allowance  credits for that end user (partner:manage only)
+//   POST   /v1/partner/end-users/:id/block      a signed-in end user can no longer sign in or use
+//   DELETE /v1/partner/end-users/:id/block      their tokens (issue #48; partner:manage only)
 // Callers: the partner's server (an app token with partner:manage, any end user), or the app itself
 // acting for that same end user (X-End-User equal to :id), so an app without a backend can offer
 // "delete my data" and "my usage".
@@ -10,12 +12,13 @@ import type { Services } from "../app.js";
 import { END_USER, PARTNER_SCOPE, requireUser, type AuthedUser } from "../auth.js";
 import { tx } from "../db.js";
 import { fail } from "../errors.js";
+import { setBlocked } from "../endusers.js";
 import { allowanceBalance, allowanceEntries, deleteEndUser, endUserDay, endUserUsage, grantAllowance, partnerSettings } from "../partners.js";
 
 export async function partnerRoutes(app: FastifyInstance, s: Services) {
   const allowed = async (req: Parameters<typeof requireUser>[1], id: string): Promise<AuthedUser> => {
     const u = await requireUser(s.db, req, "any");
-    if (u.tokenKind !== "app") fail(403, "forbidden");
+    if (u.tokenKind !== "app" && u.tokenKind !== "eu") fail(403, "forbidden");
     if (!END_USER.test(id)) fail(404, "not_found");
     if (!u.scopes?.includes(PARTNER_SCOPE) && u.endUser !== id) fail(403, "forbidden");
     return u;
@@ -60,4 +63,16 @@ export async function partnerRoutes(app: FastifyInstance, s: Services) {
     const deleted = await tx(s.db, (c) => deleteEndUser(c, u.id, req.params.id));
     return { endUser: req.params.id, deleted };
   });
+
+  for (const [method, blocked] of [["POST", true], ["DELETE", false]] as const)
+    app.route<{ Params: { id: string } }>({
+      method,
+      url: "/v1/partner/end-users/:id/block",
+      handler: async (req) => {
+        const u = await requireUser(s.db, req, PARTNER_SCOPE);
+        if (u.tokenKind !== "app") fail(403, "forbidden");
+        if (!END_USER.test(req.params.id) || !(await setBlocked(s.db, u.id, req.params.id, blocked))) fail(404, "not_found");
+        return { endUser: req.params.id, blocked };
+      },
+    });
 }

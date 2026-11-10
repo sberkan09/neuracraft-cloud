@@ -1455,3 +1455,251 @@ describe("sessions and on-demand GPUs", () => {
     assert.deepEqual(json(await inject({ method: "POST", url: "/v1/worker/warmup", headers: worker, payload: { workerId: cpu } })).jobs, []);
   });
 });
+
+describe("end-user sign-in (issue #48)", () => {
+  type Mail = { to: string; code: string; appName: string; locale: string };
+  const sent: Mail[] = [];
+  const setup = async (name = "GM Cebi") => {
+    h.s.mailer = { sendSignInCode: async (m) => void sent.push(m) };
+    h.s.config.endUserAuth.startsPerIpPerHour = 10_000;
+    h.s.config.endUserAuth.verifiesPerIpPerHour = 10_000;
+    const { createToken } = await import("../src/auth.js");
+    const { createClient } = await import("../src/endusers.js");
+    const p = await signUp(h.app);
+    const client = await createClient(h.s.db, p.id, name);
+    const server = { authorization: `Bearer ${(await createToken(h.s.db, p.id, "app", "server", ["partner:manage"], null)).secret}` };
+    const appToken = (await createToken(h.s.db, p.id, "app", "app", ["jobs:submit", "jobs:read", "assets:read"], null)).secret;
+    return { p, client_id: client.id, server, appToken };
+  };
+  const post = (url: string, payload: object, remoteAddress?: string) => inject({ method: "POST", url, payload, ...(remoteAddress ? { remoteAddress } : {}) });
+  // Asks for a code and signs in with it; returns the token response.
+  const signIn = async (client_id: string, email: string) => {
+    const start = await post("/v1/auth/email/start", { client_id, email, locale: "tr" });
+    assert.equal(start.statusCode, 202, start.body);
+    const code = sent.at(-1)!.code;
+    const r = await post("/v1/auth/email/verify", { client_id, email, code });
+    assert.equal(r.statusCode, 200, r.body);
+    return json(r) as { accessToken: string; refreshToken: string; expiresIn: number; endUser: { id: string } };
+  };
+  const bearer = (t: string) => ({ authorization: `Bearer ${t}` });
+  const sketch = { inline: PNG_1x1.toString("base64"), contentType: "image/png" };
+  const submit = (headers: Record<string, string>) =>
+    inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers, payload: { params: { mode: "map", prompt: "a wooden bridge" }, inputs: { sketch } } });
+  // A code older than the resend interval, so the next one can be asked for.
+  const age = (seconds = 120) => h.s.db.query("UPDATE sign_in_codes SET created_at = created_at - make_interval(secs => $1)", [seconds]);
+
+  it("signs in with an emailed code; the token acts for that end user only", async () => {
+    await presetCatalog();
+    const { client_id } = await setup();
+    const start = await post("/v1/auth/email/start", { client_id, email: "Ada@Example.com", locale: "tr-TR" });
+    assert.equal(start.statusCode, 202);
+    assert.deepEqual(json(start), { expiresIn: 600, resendAfter: 60 });
+    const mail = sent.at(-1)!;
+    assert.deepEqual([mail.to, mail.appName, mail.locale], ["Ada@Example.com", "GM Cebi", "tr"]);
+    assert.match(mail.code, /^\d{6}$/);
+    // Nothing about the address is stored in the clear.
+    const stored = JSON.stringify((await h.s.db.query("SELECT * FROM sign_in_codes")).rows);
+    assert.ok(!stored.includes("ada") && !stored.includes(mail.code));
+
+    const wrong = await post("/v1/auth/email/verify", { client_id, email: "ada@example.com", code: mail.code === "000000" ? "111111" : "000000" });
+    assert.equal(json(wrong).error.code, "auth.code_invalid");
+    assert.equal(json(wrong).error.params.attemptsLeft, 4);
+    const ok = await post("/v1/auth/email/verify", { client_id, email: "ada@example.com", code: mail.code });
+    assert.equal(ok.statusCode, 200, ok.body);
+    const t = json(ok);
+    assert.match(t.accessToken, /^nc_eu_/);
+    assert.match(t.refreshToken, /^nc_rt_/);
+    assert.equal(t.tokenType, "Bearer");
+    assert.equal(t.expiresIn, 3600);
+    assert.match(t.endUser.id, /^eu_/);
+    // A code works once.
+    assert.equal(json(await post("/v1/auth/email/verify", { client_id, email: "ada@example.com", code: mail.code })).error.code, "auth.code_expired");
+
+    const me = json(await inject({ method: "GET", url: "/v1/me", headers: bearer(t.accessToken) }));
+    assert.equal(me.endUser.id, t.endUser.id);
+    assert.equal(me.user, undefined);  // not the partner's account
+    // Sessions and jobs are the end user's; X-End-User is ignored.
+    assert.equal((await inject({ method: "POST", url: "/v1/sessions", headers: bearer(t.accessToken) })).statusCode, 201);
+    const job = await submit({ ...bearer(t.accessToken), "x-end-user": "someone-else" });
+    assert.equal(job.statusCode, 201, job.body);
+    assert.equal((await h.s.db.query("SELECT end_user FROM jobs WHERE id = $1", [json(job).job.id])).rows[0].end_user, t.endUser.id);
+    // Partner-only and account endpoints stay closed.
+    assert.equal((await inject({ method: "POST", url: `/v1/partner/end-users/${t.endUser.id}/block`, headers: bearer(t.accessToken) })).statusCode, 403);
+    assert.equal((await inject({ method: "GET", url: "/v1/tokens", headers: bearer(t.accessToken) })).statusCode, 403);
+    assert.equal((await inject({ method: "GET", url: `/v1/partner/end-users/${t.endUser.id}/usage`, headers: bearer(t.accessToken) })).statusCode, 200);
+    assert.equal((await inject({ method: "GET", url: "/v1/partner/end-users/install-x/usage", headers: bearer(t.accessToken) })).statusCode, 403);
+  });
+
+  it("keeps one identity per inbox and per partner", async () => {
+    const a = await setup(), b = await setup("Other app");
+    const first = await signIn(a.client_id, "john.smith+gm@gmail.com");
+    await age();
+    const again = await signIn(a.client_id, "JohnSmith@googlemail.com");
+    assert.equal(again.endUser.id, first.endUser.id);
+    await age();
+    const elsewhere = await signIn(b.client_id, "johnsmith@gmail.com");
+    assert.notEqual(elsewhere.endUser.id, first.endUser.id);
+  });
+
+  it("refuses unknown clients, bad addresses and codes; limits codes per address and IP", async () => {
+    const { client_id } = await setup();
+    assert.equal(json(await post("/v1/auth/email/start", { client_id: "nc_client_nope000000000000000", email: "a@example.com" })).error.code, "auth.client_invalid");
+    assert.equal(json(await post("/v1/auth/email/start", { email: "a@example.com" })).error.code, "auth.client_invalid");
+    assert.equal(json(await post("/v1/auth/email/start", { client_id, email: "not an address" })).error.code, "auth.invalid_email");
+    assert.equal((await post("/v1/auth/email/start", { client_id, email: "rate@example.com" })).statusCode, 202);
+    const soon = await post("/v1/auth/email/start", { client_id, email: "rate@example.com" });
+    assert.equal(soon.statusCode, 429);
+    assert.equal(json(soon).error.code, "auth.code_rate_limited");
+    assert.ok(json(soon).error.params.retryAfter > 0 && json(soon).error.params.retryAfter <= 60);
+    for (let i = 0; i < 4; i++) {
+      await age();
+      assert.equal((await post("/v1/auth/email/start", { client_id, email: "rate@example.com" })).statusCode, 202);
+    }
+    await age();
+    assert.equal(json(await post("/v1/auth/email/start", { client_id, email: "rate@example.com" })).error.code, "auth.code_rate_limited");  // 5 an hour
+
+    // Five wrong attempts use the code up.
+    await post("/v1/auth/email/start", { client_id, email: "guess@example.com" });
+    const real = sent.at(-1)!.code;
+    const bad = real === "123456" ? "654321" : "123456";
+    for (let left = 4; left >= 1; left--)
+      assert.equal(json(await post("/v1/auth/email/verify", { client_id, email: "guess@example.com", code: bad })).error.params.attemptsLeft, left);
+    assert.equal(json(await post("/v1/auth/email/verify", { client_id, email: "guess@example.com", code: bad })).error.code, "auth.code_expired");
+    assert.equal(json(await post("/v1/auth/email/verify", { client_id, email: "guess@example.com", code: real })).error.code, "auth.code_expired");
+    // An expired code.
+    await age();
+    await post("/v1/auth/email/start", { client_id, email: "late@example.com" });
+    await h.s.db.query("UPDATE sign_in_codes SET expires_at = now() - interval '1 second'");
+    assert.equal(json(await post("/v1/auth/email/verify", { client_id, email: "late@example.com", code: sent.at(-1)!.code })).error.code, "auth.code_expired");
+
+    // Per IP.
+    h.s.config.endUserAuth.startsPerIpPerHour = 2;
+    for (const e of ["ip1@example.com", "ip2@example.com"]) assert.equal((await post("/v1/auth/email/start", { client_id, email: e }, "203.0.113.9")).statusCode, 202);
+    assert.equal(json(await post("/v1/auth/email/start", { client_id, email: "ip3@example.com" }, "203.0.113.9")).error.code, "auth.code_rate_limited");
+    assert.equal((await post("/v1/auth/email/start", { client_id, email: "ip3@example.com" }, "203.0.113.10")).statusCode, 202);
+  });
+
+  it("says when email is not set up, and does not count a failed email", async () => {
+    const { client_id } = await setup();
+    h.s.mailer = null;
+    assert.equal(json(await post("/v1/auth/email/start", { client_id, email: "x@example.com" })).error.code, "auth.sign_in_unavailable");
+    h.s.mailer = { sendSignInCode: async () => { throw new Error("provider down"); } };
+    const r = await post("/v1/auth/email/start", { client_id, email: "x@example.com" });
+    assert.equal(r.statusCode, 503);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM sign_in_codes WHERE client_id = $1", [client_id])).rows[0].n), 0);
+  });
+
+  it("rotates refresh tokens, revokes the family on reuse, and signs out", async () => {
+    const { client_id } = await setup();
+    const t = await signIn(client_id, "rot@example.com");
+    const r1 = await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t.refreshToken });
+    assert.equal(r1.statusCode, 200, r1.body);
+    const t1 = json(r1);
+    assert.equal(t1.endUser.id, t.endUser.id);
+    assert.notEqual(t1.refreshToken, t.refreshToken);
+    assert.equal((await inject({ method: "GET", url: "/v1/me", headers: bearer(t1.accessToken) })).statusCode, 200);
+    // The old refresh token again: the whole family goes, access tokens too.
+    assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t.refreshToken })).error.code, "auth.refresh_invalid");
+    assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t1.refreshToken })).error.code, "auth.refresh_invalid");
+    assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: bearer(t1.accessToken) })).error.code, "auth.token_revoked");
+    // Another client's id does not refresh this client's token.
+    const other = await setup("Other");
+    await age();
+    const t2 = await signIn(client_id, "rot@example.com");
+    assert.equal(json(await post("/v1/auth/token", { client_id: other.client_id, grantType: "refresh_token", refreshToken: t2.refreshToken })).error.code, "auth.refresh_invalid");
+    assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "password", refreshToken: t2.refreshToken })).error.code, "request.invalid");
+    // Access tokens expire.
+    await h.s.db.query("UPDATE end_user_tokens SET expires_at = now() - interval '1 second' WHERE kind = 'access' AND family = (SELECT family FROM end_user_tokens WHERE kind = 'access' ORDER BY created_at DESC LIMIT 1)");
+    assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: bearer(t2.accessToken) })).error.code, "auth.token_expired");
+    // Sign out.
+    assert.equal((await post("/v1/auth/revoke", { client_id, refreshToken: t2.refreshToken })).statusCode, 204);
+    assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t2.refreshToken })).error.code, "auth.refresh_invalid");
+    assert.equal((await post("/v1/auth/revoke", { client_id, refreshToken: "nc_rt_unknown" })).statusCode, 204);
+  });
+
+  it("blocks an end user from the partner's server", async () => {
+    const { client_id, server } = await setup();
+    const t = await signIn(client_id, "troll@example.com");
+    const block = await inject({ method: "POST", url: `/v1/partner/end-users/${t.endUser.id}/block`, headers: server });
+    assert.deepEqual(json(block), { endUser: t.endUser.id, blocked: true });
+    assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: bearer(t.accessToken) })).error.code, "auth.token_revoked");
+    assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t.refreshToken })).error.code, "auth.refresh_invalid");
+    // No code is sent to a blocked identity, but the answer is the same.
+    await age();
+    const before = sent.length;
+    assert.equal((await post("/v1/auth/email/start", { client_id, email: "troll@example.com" })).statusCode, 202);
+    assert.equal(sent.length, before);
+    assert.equal((await inject({ method: "POST", url: "/v1/partner/end-users/eu_unknown/block", headers: server })).statusCode, 404);
+    assert.equal(json(await inject({ method: "DELETE", url: `/v1/partner/end-users/${t.endUser.id}/block`, headers: server })).blocked, false);
+    await age();
+    assert.equal((await signIn(client_id, "troll@example.com")).endUser.id, t.endUser.id);
+  });
+
+  it("deletes the account from the app: identity, data and tokens", async () => {
+    await presetCatalog();
+    const { client_id } = await setup();
+    const t = await signIn(client_id, "gone@example.com");
+    const job = await submit(bearer(t.accessToken));
+    assert.equal(job.statusCode, 201, job.body);
+    assert.equal((await inject({ method: "DELETE", url: "/v1/me", headers: bearer(t.accessToken) })).statusCode, 204);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM partner_end_users WHERE end_user = $1", [t.endUser.id])).rows[0].n), 0);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM end_user_tokens WHERE end_user = $1", [t.endUser.id])).rows[0].n), 0);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM assets WHERE end_user = $1", [t.endUser.id])).rows[0].n), 0);
+    assert.equal((await h.s.db.query("SELECT 1 FROM jobs WHERE id = $1", [json(job).job.id])).rows.length, 0);  // cancelled, then deleted
+    assert.equal((await inject({ method: "GET", url: "/v1/me", headers: bearer(t.accessToken) })).statusCode, 401);
+    await age();
+    assert.notEqual((await signIn(client_id, "gone@example.com")).endUser.id, t.endUser.id);
+  });
+
+  it("turns the shipped app token off, and caps all end users of a partner per day", async () => {
+    await presetCatalog();
+    const { p, client_id, appToken } = await setup();
+    const t = await signIn(client_id, "cap@example.com");
+    await age();
+    const t2 = await signIn(client_id, "cap2@example.com");
+    await h.s.db.query("INSERT INTO partners (user_id, partner_daily_jobs, require_end_user_tokens) VALUES ($1, 2, true)", [p.id]);
+    const old = await submit({ authorization: `Bearer ${appToken}`, "x-end-user": "install-1" });
+    assert.equal(old.statusCode, 401);
+    assert.equal(json(old).error.code, "auth.end_user_token_required");
+    const done = async (r: { body: string }) => h.s.db.query("UPDATE jobs SET state = 'succeeded' WHERE id = $1", [JSON.parse(r.body).job.id]);
+    await done(await submit(bearer(t.accessToken)));
+    const second = await submit(bearer(t2.accessToken));
+    assert.equal(second.statusCode, 201, second.body);
+    await done(second);
+    const third = await submit(bearer(t.accessToken));
+    assert.equal(third.statusCode, 429);
+    assert.equal(json(third).error.code, "quota.partner_daily");
+  });
+
+  it("sends the code through Brevo's API", async () => {
+    const { BrevoMailer, signInMessage } = await import("../src/mailer.js");
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fake = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response('{"messageId":"x"}', { status: 201 });
+    }) as unknown as typeof fetch;
+    await new BrevoMailer("key-123", "NeuraCraft <no-reply@neuracraft.app>", fake).sendSignInCode({ to: "ada@example.com", code: "042137", appName: "GM Cebi", locale: "tr", minutes: 10 });
+    assert.equal(calls[0]!.url, "https://api.brevo.com/v3/smtp/email");
+    assert.equal((calls[0]!.init.headers as Record<string, string>)["api-key"], "key-123");
+    const body = JSON.parse(String(calls[0]!.init.body));
+    assert.deepEqual(body.sender, { email: "no-reply@neuracraft.app", name: "NeuraCraft" });
+    assert.deepEqual(body.to, [{ email: "ada@example.com" }]);
+    assert.equal(body.subject, "GM Cebi giriş kodun: 042137");
+    assert.match(body.textContent, /10 dakika/);
+    const failing = (async () => new Response("bad", { status: 400 })) as unknown as typeof fetch;
+    await assert.rejects(new BrevoMailer("k", "a@b.co", failing).sendSignInCode({ to: "x@example.com", code: "1", appName: "A", locale: "en", minutes: 10 }));
+    assert.match(signInMessage({ to: "", code: "1", appName: "<b>", locale: "en", minutes: 10 }).html, /&lt;b&gt;/);
+  });
+
+  it("cleans up old codes and dead tokens", async () => {
+    const { runRetention } = await import("../src/retention.js");
+    const { client_id } = await setup();
+    const t = await signIn(client_id, "old@example.com");
+    await post("/v1/auth/revoke", { client_id, refreshToken: t.refreshToken });
+    await h.s.db.query("UPDATE end_user_tokens SET revoked_at = now() - interval '2 days'");
+    await h.s.db.query("UPDATE sign_in_codes SET created_at = now() - interval '2 days'");
+    await runRetention(h.s.db, h.s.storage);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM end_user_tokens WHERE end_user = $1", [t.endUser.id])).rows[0].n), 0);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM sign_in_codes WHERE client_id = $1", [client_id])).rows[0].n), 0);
+  });
+});

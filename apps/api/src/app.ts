@@ -6,6 +6,7 @@ import { ApiFailure } from "./errors.js";
 import type { JobEvents } from "./events.js";
 import { assetRoutes } from "./routes/assets.js";
 import { authRoutes } from "./routes/auth.js";
+import { endUserAuthRoutes } from "./routes/enduser-auth.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { presetRoutes } from "./routes/presets.js";
 import { reportRoutes } from "./routes/reports.js";
@@ -19,6 +20,7 @@ import type { Storage } from "./storage.js";
 import { LlmPromptWriter, TemplatePromptWriter, type PromptWriter } from "./prompts.js";
 import { EngineModerator, parseThresholds, type Moderator } from "./moderation.js";
 import type { CapacityManager } from "./capacity.js";
+import type { Mailer } from "./mailer.js";
 
 export interface Services {
   config: Config;
@@ -28,6 +30,7 @@ export interface Services {
   promptWriter?: PromptWriter; // default: Claude when ANTHROPIC_API_KEY is set, else the template
   moderator?: Moderator; // default: the engine's classify scores against MODERATION_THRESHOLDS
   capacity?: CapacityManager; // on-demand GPU workers (main.ts creates it when CAPACITY_PROVIDER is set)
+  mailer?: Mailer | null; // sign-in codes (issue #48); default from MAIL_PROVIDER, null: no email sign-in
 }
 
 export function moderatorFor(s: Services): Moderator {
@@ -74,6 +77,7 @@ export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Pr
     return { ok: true };
   });
   await authRoutes(app, s);
+  await endUserAuthRoutes(app, s);
   await assetRoutes(app, s);
   await jobRoutes(app, s);
   await presetRoutes(app, s);

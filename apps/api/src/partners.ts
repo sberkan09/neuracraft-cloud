@@ -14,15 +14,19 @@ export interface PartnerSettings {
   endUserDailyJobs: number | null;
   quotaTimezone: string;
   allowanceRequired: boolean;
+  partnerDailyJobs: number | null; // across all end users (issue #48)
+  requireEndUserTokens: boolean;
 }
 
 export async function partnerSettings(q: Q, userId: string): Promise<PartnerSettings | null> {
-  const r = await q.query<{ end_user_daily_jobs: number | null; quota_timezone: string; allowance_required: boolean }>(
-    "SELECT end_user_daily_jobs, quota_timezone, allowance_required FROM partners WHERE user_id = $1",
+  const r = await q.query<{ end_user_daily_jobs: number | null; quota_timezone: string; allowance_required: boolean; partner_daily_jobs: number | null; require_end_user_tokens: boolean }>(
+    "SELECT end_user_daily_jobs, quota_timezone, allowance_required, partner_daily_jobs, require_end_user_tokens FROM partners WHERE user_id = $1",
     [userId],
   );
   const p = r.rows[0];
-  return p ? { endUserDailyJobs: p.end_user_daily_jobs, quotaTimezone: p.quota_timezone, allowanceRequired: p.allowance_required } : null;
+  return p
+    ? { endUserDailyJobs: p.end_user_daily_jobs, quotaTimezone: p.quota_timezone, allowanceRequired: p.allowance_required, partnerDailyJobs: p.partner_daily_jobs, requireEndUserTokens: p.require_end_user_tokens }
+    : null;
 }
 
 // Jobs that count against the day: everything started except jobs the service failed or that were
@@ -39,6 +43,17 @@ export async function endUserDay(q: Q, userId: string, endUser: string, tz: stri
   return { used: Number(r.rows[0]!.used), resetsAt: r.rows[0]!.resets_at };
 }
 
+// All end users of a partner today, for the partner-wide ceiling.
+export async function partnerDay(q: Q, userId: string, tz: string): Promise<{ used: number; resetsAt: Date }> {
+  const r = await q.query<{ used: string; resets_at: Date }>(
+    `WITH day AS (SELECT date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2 AS start)
+     SELECT (SELECT count(*) FROM jobs, day WHERE user_id = $1 AND end_user IS NOT NULL AND created_at >= day.start AND ${COUNTED}) AS used,
+            (SELECT start + interval '1 day' FROM day) AS resets_at`,
+    [userId, tz],
+  );
+  return { used: Number(r.rows[0]!.used), resetsAt: r.rows[0]!.resets_at };
+}
+
 // Called inside the submission transaction (the per-user lock is held) before anything is reserved:
 // the daily quota, and with allowances on, that the end user's allowance covers the reservation.
 // Returns whether the job draws on the allowance (reserveAllowance after the job row exists).
@@ -48,6 +63,10 @@ export async function checkEndUserQuota(c: pg.PoolClient, userId: string, endUse
   if (p.endUserDailyJobs !== null) {
     const day = await endUserDay(c, userId, endUser, p.quotaTimezone);
     if (day.used >= p.endUserDailyJobs) fail(429, "quota.end_user_daily", { limit: p.endUserDailyJobs, resetsAt: day.resetsAt.toISOString() });
+  }
+  if (p.partnerDailyJobs !== null) {
+    const day = await partnerDay(c, userId, p.quotaTimezone);
+    if (day.used >= p.partnerDailyJobs) fail(429, "quota.partner_daily", { resetsAt: day.resetsAt.toISOString() });
   }
   if (!p.allowanceRequired) return false;
   const left = await allowanceBalance(c, userId, endUser);
@@ -128,6 +147,8 @@ export async function deleteEndUser(c: pg.PoolClient, userId: string, endUser: s
   await c.query("DELETE FROM end_user_allowance WHERE user_id = $1 AND end_user = $2", [userId, endUser]);  // the partner keeps its receipts
   const assets = await c.query("DELETE FROM assets WHERE owner_id = $1 AND end_user = $2", [userId, endUser]);
   const jobs = await c.query("DELETE FROM jobs WHERE user_id = $1 AND end_user = $2 AND state IN ('succeeded', 'failed', 'cancelled')", [userId, endUser]);
+  // A signed-in end user's identity and tokens (issue #48): signing in again makes a new end user.
+  await c.query("DELETE FROM partner_end_users WHERE user_id = $1 AND end_user = $2", [userId, endUser]);
   return { assets: assets.rowCount ?? 0, jobs: jobs.rowCount ?? 0 };
 }
 

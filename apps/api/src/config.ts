@@ -32,6 +32,21 @@ export interface Config {
     maxPerPartner: number; // open sessions per account (partners: partners.max_sessions overrides)
   };
   capacity: CapacityConfig;
+  mail: {
+    provider: "" | "brevo" | "log"; // "": no email, so no end-user sign-in (issue #48)
+    brevoApiKey: string;
+    from: string; // "NeuraCraft <no-reply@neuracraft.app>"
+  };
+  endUserAuth: {
+    accessMinutes: number; // nc_eu_ access tokens
+    refreshDays: number; // nc_rt_ refresh tokens (sliding: every refresh starts the period again)
+    codeMinutes: number; // emailed codes
+    codeAttempts: number;
+    codeEverySeconds: number; // one code per address this often
+    codesPerHour: number; // per address
+    startsPerIpPerHour: number; // codes asked for from one IP
+    verifiesPerIpPerHour: number;
+  };
 }
 
 // On-demand GPU workers (capacity.ts). provider "" = none: workers are started by hand, as before.
@@ -129,6 +144,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             .filter((kv) => kv.length === 2 && kv[0]),
         ),
       },
+    },
+    mail: {
+      provider: env.MAIL_PROVIDER === "brevo" ? "brevo" : env.MAIL_PROVIDER === "log" ? "log" : "",
+      brevoApiKey: env.BREVO_API_KEY ?? "",
+      from: env.MAIL_FROM ?? "",
+    },
+    endUserAuth: {
+      accessMinutes: Number(env.END_USER_ACCESS_MINUTES ?? 60),
+      refreshDays: Number(env.END_USER_REFRESH_DAYS ?? 90),
+      codeMinutes: Number(env.SIGN_IN_CODE_MINUTES ?? 10),
+      codeAttempts: Number(env.SIGN_IN_CODE_ATTEMPTS ?? 5),
+      codeEverySeconds: Number(env.SIGN_IN_CODE_EVERY_SECONDS ?? 60),
+      codesPerHour: Number(env.SIGN_IN_CODES_PER_HOUR ?? 5),
+      startsPerIpPerHour: Number(env.SIGN_IN_STARTS_PER_IP_PER_HOUR ?? 20),
+      verifiesPerIpPerHour: Number(env.SIGN_IN_VERIFIES_PER_IP_PER_HOUR ?? 60),
     },
   };
 }

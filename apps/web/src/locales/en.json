@@ -100,7 +100,16 @@
     "quota.end_user_daily": "You have used today's images ({{limit}}). More from {{resetsAt}}.",
     "allowance.insufficient": "Not enough image credits left. Buy more in the app.",
     "session.limit": "Too many sessions are open right now (at most {{max}}).",
-    "session.closed": "This session has ended. Start a new one."
+    "session.closed": "This session has ended. Start a new one.",
+    "auth.client_invalid": "This app is not registered for sign-in.",
+    "auth.code_invalid": "Wrong code. Attempts left: {{attemptsLeft}}.",
+    "auth.code_expired": "The code has expired. Ask for a new one.",
+    "auth.code_rate_limited": "Too many codes. Try again in {{retryAfter}} seconds.",
+    "auth.refresh_invalid": "Please sign in again.",
+    "auth.end_user_blocked": "This account has been blocked.",
+    "auth.end_user_token_required": "Please sign in to use this feature.",
+    "auth.sign_in_unavailable": "Sign-in is temporarily unavailable.",
+    "quota.partner_daily": "Today's images for this app are used up. More from {{resetsAt}}."
   },
   "nav": {
     "label": "Pages",
