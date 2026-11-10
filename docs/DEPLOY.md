@@ -90,6 +90,10 @@ GitHub → Settings → Secrets and variables → Actions:
    - once the domain is verified, add the sender `no-reply@neuracraft.app` (`MAIL_FROM` in
      `settings.env`);
    - SMTP & API → API keys → create a key, and save it as the `BREVO_API_KEY` secret.
+   - after the next deploy, check it:
+     `docker compose exec api node apps/api/dist/src/cli/mail-test.js --to <your address>`.
+     A failure prints Brevo's answer (an unverified sender, an IP not in Brevo's authorized IPs, a
+     wrong key).
 
 ## Day to day
 

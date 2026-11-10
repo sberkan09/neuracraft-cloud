@@ -48,7 +48,13 @@ export class BrevoMailer implements Mailer {
       body: JSON.stringify({ sender: parseFrom(this.from), to: [{ email: m.to }], subject: msg.subject, textContent: msg.text, htmlContent: msg.html, tags: ["sign-in-code"] }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!r.ok) throw new Error(`brevo: sending failed (${r.status})`);  // the body may echo the address: not logged
+    if (!r.ok) {
+      // The body may echo the address, so it stays out of the message (which the API logs);
+      // cli/mail-test.ts prints it.
+      const e = new Error(`brevo: sending failed (${r.status})`) as Error & { body?: string };
+      e.body = (await r.text().catch(() => "")).slice(0, 500);
+      throw e;
+    }
   }
 }
 
