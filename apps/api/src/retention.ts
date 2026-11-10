@@ -8,7 +8,8 @@
 //   with the last of them. Deleting an account (cascade) leaves its blobs to this step too;
 // - the narrative and prompts of finished preset jobs once their inputs' time is up (the job row keeps
 //   timing, cost, the preset and the prompt instructions' version);
-// - the prompt in resolved reports' snapshots, RESOLVED_REPORT_DAYS after the resolution.
+// - the prompt in resolved reports' snapshots, RESOLVED_REPORT_DAYS after the resolution;
+// - end-user sign-in codes after a day, and their tokens a day after they expired or were revoked.
 import type { Db } from "./db.js";
 import { tx } from "./db.js";
 import { findPreset, presets } from "./presets.js";
@@ -158,4 +159,9 @@ async function cleanup(db: Db, storage: Storage, now: Date, out: CleanupResult) 
     [new Date(now.getTime() - RESOLVED_REPORT_DAYS * 86400_000)],
   );
   out.reports += rep.rowCount ?? 0;
+
+  // 5. End-user sign-in (issue #48): codes after a day (the per-address limits look back an hour),
+  // and tokens a day after they expired or were revoked.
+  await db.query("DELETE FROM sign_in_codes WHERE created_at <= $1", [hoursFrom(now, -24)]);
+  await db.query("DELETE FROM end_user_tokens WHERE coalesce(revoked_at, expires_at) <= $1", [hoursFrom(now, -24)]);
 }

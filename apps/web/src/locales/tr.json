@@ -100,7 +100,16 @@
     "quota.end_user_daily": "Bugünkü görsel hakkınızı kullandınız ({{limit}}). Yenisi {{resetsAt}} itibarıyla.",
     "allowance.insufficient": "Yeterli görsel krediniz kalmadı. Uygulamadan satın alabilirsiniz.",
     "session.limit": "Şu anda çok fazla açık oturum var (en fazla {{max}}).",
-    "session.closed": "Bu oturum sona erdi. Yeni bir oturum başlatın."
+    "session.closed": "Bu oturum sona erdi. Yeni bir oturum başlatın.",
+    "auth.client_invalid": "Bu uygulama giriş için kayıtlı değil.",
+    "auth.code_invalid": "Kod yanlış. Kalan deneme: {{attemptsLeft}}.",
+    "auth.code_expired": "Kodun süresi doldu. Yeni bir kod isteyin.",
+    "auth.code_rate_limited": "Çok fazla kod istendi. {{retryAfter}} saniye sonra tekrar deneyin.",
+    "auth.refresh_invalid": "Lütfen yeniden giriş yapın.",
+    "auth.end_user_blocked": "Bu hesap engellendi.",
+    "auth.end_user_token_required": "Bu özelliği kullanmak için giriş yapın.",
+    "auth.sign_in_unavailable": "Giriş şu an kullanılamıyor.",
+    "quota.partner_daily": "Bu uygulamanın bugünkü görsel hakkı doldu. Yenisi {{resetsAt}} itibarıyla."
   },
   "nav": {
     "label": "Sayfalar",

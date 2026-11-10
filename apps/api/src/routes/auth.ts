@@ -2,11 +2,13 @@ import type { FastifyInstance } from "fastify";
 import type { Services } from "../app.js";
 import { checkPassword, createSession, endSession, hashPassword, requireUser, SESSION_COOKIE } from "../auth.js";
 import { tx } from "../db.js";
+import { endUserIdentity } from "../endusers.js";
 import { fail } from "../errors.js";
 import { balance, entry } from "../ledger.js";
+import { deleteEndUser, endUserDay, partnerSettings } from "../partners.js";
 
 export const LOCALES = ["en", "tr"] as const;
-const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,253}\.[^\s@]{2,}$/;
+export const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,253}\.[^\s@]{2,}$/;
 
 export async function authRoutes(app: FastifyInstance, s: Services) {
   const setCookie = (reply: import("fastify").FastifyReply, token: string) =>
@@ -62,12 +64,30 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
 
   app.get("/v1/me", async (req) => {
     const u = await requireUser(s.db, req, "any");
+    // A partner app's end user sees themselves, not the partner's account (issue #48).
+    if (u.endUser) {
+      const p = await partnerSettings(s.db, u.id);
+      const day = p ? await endUserDay(s.db, u.id, u.endUser, p.quotaTimezone) : null;
+      const identity = await endUserIdentity(s.db, u.id, u.endUser);
+      return {
+        endUser: { id: u.endUser, createdAt: identity?.createdAt.toISOString() ?? null },
+        quota: p && day ? { daily: p.endUserDailyJobs, used: day.used, resetsAt: day.resetsAt.toISOString() } : null,
+      };
+    }
     return { user: u, credits: await balance(s.db, u.id) };
   });
 
   // Deletes the account and everything it owns (issue #19): rows at once, the bytes with the next
   // cleanup (retention.ts). The password confirms it (accounts without one confirm their email).
   app.delete<{ Body: { password?: string; email?: string } }>("/v1/me", async (req, reply) => {
+    // A signed-in end user deletes their identity and everything stored for them, and every token
+    // (the in-app account deletion the stores require; issue #48).
+    const auth = req.headers.authorization;
+    if (typeof auth === "string" && auth.startsWith("Bearer nc_eu_")) {
+      const eu = await requireUser(s.db, req, "any");
+      await tx(s.db, (c) => deleteEndUser(c, eu.id, eu.endUser!));
+      return reply.status(204).send();
+    }
     const u = await requireUser(s.db, req, "session");
     const r = await s.db.query<{ password_hash: string | null }>("SELECT password_hash FROM users WHERE id = $1", [u.id]);
     const hash = r.rows[0]?.password_hash ?? null;

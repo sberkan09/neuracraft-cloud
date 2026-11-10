@@ -3,6 +3,7 @@ import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "no
 import { promisify } from "node:util";
 import type { FastifyRequest } from "fastify";
 import type { Db } from "./db.js";
+import { accessTokenUser, ACCESS_TOKEN } from "./endusers.js";
 import { fail } from "./errors.js";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number, opts: { N: number; r: number; p: number; maxmem: number }) => Promise<Buffer>;
@@ -69,7 +70,8 @@ export type Access = AppScope | "session" | "any";
 
 export interface AuthedUser extends SessionUser {
   tokenId?: string; // set when the request carried a bearer token
-  tokenKind?: "pat" | "app";
+  tokenKind?: "pat" | "app" | "eu"; // eu: a signed-in end user of a partner app (issue #48)
+  clientId?: string; // the partner client of an eu token
   scopes?: string[];
   // The partner app's end user the request acts for (X-End-User, required on app tokens without
   // partner:manage); null for people and personal tokens. Ownership is (account, end user).
@@ -115,12 +117,24 @@ function takeToken(id: string): boolean {
   return true;
 }
 
+// A signed-in end user's access token: acts like an app token with X-End-User set to that end user
+// (the header is ignored), with the partner client's scopes.
+async function endUserTokenUser(db: Db, secret: string, access: Access): Promise<AuthedUser> {
+  const t = await accessTokenUser(db, secret);
+  if (access === "session" || access === PARTNER_SCOPE) fail(403, "forbidden");
+  if (access !== "any" && !t.scopes.includes(access)) fail(403, "auth.scope_missing", { scope: access });
+  if (!takeToken(`${t.clientId}:${t.endUser}`)) fail(429, "rate_limited");
+  return { id: t.id, email: t.email, locale: t.locale, plan: t.plan, tokenId: t.tokenId, tokenKind: "eu", clientId: t.clientId, scopes: t.scopes, endUser: t.endUser };
+}
+
 async function tokenUser(db: Db, req: FastifyRequest, secret: string, access: Access): Promise<AuthedUser> {
+  if (ACCESS_TOKEN.test(secret)) return endUserTokenUser(db, secret, access);
   if (!TOKEN.test(secret)) fail(401, "auth.required");
-  const r = await db.query<SessionUser & { token_id: string; kind: "pat" | "app"; scopes: string[]; expired: boolean; revoked: boolean }>(
+  const r = await db.query<SessionUser & { token_id: string; kind: "pat" | "app"; scopes: string[]; expired: boolean; revoked: boolean; eu_only: boolean }>(
     `SELECT u.id, u.email, u.locale, u.plan, t.id AS token_id, t.kind, t.scopes,
-            (t.expires_at IS NOT NULL AND t.expires_at <= now()) AS expired, t.revoked_at IS NOT NULL AS revoked
-       FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.secret_hash = $1`,
+            (t.expires_at IS NOT NULL AND t.expires_at <= now()) AS expired, t.revoked_at IS NOT NULL AS revoked,
+            coalesce(p.require_end_user_tokens, false) AS eu_only
+       FROM api_tokens t JOIN users u ON u.id = t.user_id LEFT JOIN partners p ON p.user_id = t.user_id WHERE t.secret_hash = $1`,
     [hashToken(secret)],
   );
   const t = r.rows[0] ?? fail(401, "auth.required");
@@ -133,6 +147,8 @@ async function tokenUser(db: Db, req: FastifyRequest, secret: string, access: Ac
   const header = req.headers["x-end-user"];
   let endUser: string | null = null;
   if (t.kind === "app" && !t.scopes.includes(PARTNER_SCOPE)) {
+    // Once the partner's app signs its end users in (issue #48), the shipped app token stops working.
+    if (t.eu_only) fail(401, "auth.end_user_token_required");
     if (typeof header !== "string" || !header) fail(400, "partner.end_user_required");
     if (!END_USER.test(header as string)) fail(400, "partner.end_user_required", { reason: "1-64 of A-Z a-z 0-9 . _ : @ -" });
     endUser = header as string;

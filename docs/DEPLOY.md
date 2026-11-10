@@ -11,6 +11,7 @@ files are in `deploy/production/`.
 | HTTPS | Caddy, Let's Encrypt | free |
 | GPUs | Runpod, EU-RO-1, A5000 / A4000 / 4090 | `CAPACITY_MONTHLY_BUDGET_USD` (beta: 15 USD) |
 | Model cache | a Runpod network volume in EU-RO-1, 20 GB (optional) | ~$1.4/month |
+| Email (sign-in codes) | Brevo, free plan: 300 emails a day | free |
 
 ## How it fits
 
@@ -53,6 +54,7 @@ GitHub → Settings → Secrets and variables → Actions:
 | `RUNPOD_API_KEY` | a Runpod API key |
 | `ANTHROPIC_API_KEY` | optional: narratives → prompts with Claude (a template otherwise) |
 | `ADMIN_TOKEN` | optional, ≥ 16 characters: `GET /v1/admin/usage-report` (docs/USAGE_LOG.md) |
+| `BREVO_API_KEY` | a Brevo API key, for partner apps' sign-in codes (below); without it, sign-in answers `auth.sign_in_unavailable` |
 
 ## First setup
 
@@ -72,12 +74,22 @@ GitHub → Settings → Secrets and variables → Actions:
      ```
      ssh -i ~/.ssh/neuracraft_deploy deploy@<ip>
      cd /opt/neuracraft
-     docker compose exec api node apps/api/dist/src/cli/partner.js --email <account> --daily-jobs 20
+     docker compose exec api node apps/api/dist/src/cli/partner.js --email <account> --daily-jobs 20 --partner-daily-jobs 300
      docker compose exec api node apps/api/dist/src/cli/grant-credits.js --email <account> --credits 5000 --reason beta
-     docker compose exec api node apps/api/dist/src/cli/create-token.js --email <account> --kind app --name "GM Cebi app" --scopes jobs:submit,jobs:read,assets:read
+     docker compose exec api node apps/api/dist/src/cli/partner-client.js --email <account> --name "GM Cebi"
      ```
-   - The last command prints the app token (`nc_app_...`) once. It goes into the GM Cebi build
-     (`--dart-define=NC_APP_TOKEN=...`), never into a repository.
+   - The last command prints the client id (`nc_client_...`). It is public: it goes into the GM Cebi
+     build, and end users sign in with an emailed code (docs/partners/gm-cebi.md).
+   - Builds from before sign-in used an app token (`create-token.js --kind app`, sent with
+     `X-End-User`). Once the sign-in build ships: `partner.js --email <account> --require-end-user-tokens on`,
+     then revoke that token.
+6. Brevo, for the sign-in codes:
+   - sign up at brevo.com (free plan);
+   - Senders, Domains & Dedicated IPs → Domains → add `neuracraft.app`, and add the DNS records it
+     shows (a Brevo code, DKIM, DMARC) in Cloudflare, proxy off;
+   - once the domain is verified, add the sender `no-reply@neuracraft.app` (`MAIL_FROM` in
+     `settings.env`);
+   - SMTP & API → API keys → create a key, and save it as the `BREVO_API_KEY` secret.
 
 ## Day to day
 

@@ -2,31 +2,73 @@
 
 How the GM Cebi app (Flutter) draws battle maps with NeuraCraft Cloud: the game master sketches the
 terrain, the service turns it into a picture, and the app puts tokens on top. Everything here is the
-public API; GM Cebi is a partner account (issue #21).
+public API; GM Cebi is a partner account (issue #21) whose end users sign in with an emailed code
+(issue #48).
 
 ## Setup (operator)
 
 ```
-node apps/api/dist/src/cli/create-token.js --email gm-cebi@… --kind app --name "GM Cebi app" \
-    --scopes jobs:submit,jobs:read,assets:read
-node apps/api/dist/src/cli/partner.js --email gm-cebi@… --daily-jobs 20 --timezone Europe/Istanbul
+node apps/api/dist/src/cli/partner-client.js --email gm-cebi@… --name "GM Cebi"     # prints nc_client_…
+node apps/api/dist/src/cli/partner.js --email gm-cebi@… --daily-jobs 20 --partner-daily-jobs 300 \
+    --timezone Europe/Istanbul
 ```
 
-- The **app token** (`nc_app_…`) ships in the app. It can only act for one end user at a time.
-- A second token with `partner:manage` is for GM Cebi's own server, if it ever has one. It grants
-  allowances and deletes end users' data. It never goes into the app.
+- The **client id** (`nc_client_…`) ships in the app. It is public and grants nothing on its own: the
+  end user signs in with an emailed code (issue #48), and the app gets short-lived tokens for that end
+  user. Its name ("GM Cebi") appears in the code email.
+- `--daily-jobs` limits each signed-in end user; `--partner-daily-jobs` caps all of them together, so
+  a burst of new accounts cannot drain the balance.
+- Once a build with sign-in ships, `partner.js --require-end-user-tokens on` turns the old app token
+  (`nc_app_…` with `X-End-User`) off; then revoke it. Until then both work.
+- A token with `partner:manage` is for GM Cebi's own server, if it ever has one. It grants allowances,
+  blocks and deletes end users. It never goes into the app.
+
+## Sign-in
+
+All four calls take JSON and no `Authorization` header.
+
+1. `POST /v1/auth/email/start` `{client_id, email, locale: "tr"}` → `202 {expiresIn: 600, resendAfter: 60}`.
+   - A 6-digit code goes to that address, valid for 10 minutes.
+   - The answer is the same whether or not the address has signed in before.
+   - At most one code a minute and 5 an hour per address, and a limit per IP:
+     `429 auth.code_rate_limited` (`retryAfter` seconds).
+2. `POST /v1/auth/email/verify` `{client_id, email, code}` → `200`:
+   ```json
+   {"accessToken": "nc_eu_…", "tokenType": "Bearer", "expiresIn": 3600, "refreshToken": "nc_rt_…", "endUser": {"id": "eu_…"}}
+   ```
+   - The end user is created on the first sign-in.
+   - The same inbox is the same end user: letter case, a `+tag` and, for Gmail, dots don't matter.
+   - Errors:
+     - `400 auth.code_invalid` (`attemptsLeft`): wrong code;
+     - `400 auth.code_expired`: expired, used, or 5 wrong attempts; ask for a new code.
+3. `POST /v1/auth/token` `{client_id, grantType: "refresh_token", refreshToken}` → `200`, same shape.
+   - Do this when a request answers `401 auth.token_expired` (the access token lasts an hour).
+   - The refresh token changes every time: store the new one and drop the old one.
+   - A refresh token used twice ends the sign-in (`401 auth.refresh_invalid`), so refresh one at a time.
+   - The refresh token lasts 90 days from its last use.
+4. `POST /v1/auth/revoke` `{client_id, refreshToken}` → `204`: sign out.
+
+Keep both tokens in the platform keystore (Keychain, Android Keystore). On `401 auth.refresh_invalid`
+go back to the sign-in screen. Ask for sign-in only when the online feature is first used.
+
+**The account** (with the access token):
+- `GET /v1/me` → `{endUser: {id, createdAt}, quota: {daily, used, resetsAt}}`.
+- `DELETE /v1/me` → `204`: deletes the end user, everything stored for them and all their tokens.
+  This is the in-app account deletion Google Play and the App Store require, and the "delete my data"
+  button.
 
 ## Every request
 
 ```
-Authorization: Bearer nc_app_…
-X-End-User: <install id>        1-64 of A-Z a-z 0-9 . _ : @ -   (a random id made at install time)
+Authorization: Bearer nc_eu_…      the end user's access token
 ```
 
-- Everything the app makes belongs to (GM Cebi, that end user). Another install cannot see it.
+- Everything the app makes belongs to (GM Cebi, that end user). Another end user cannot see it.
 - The rate limit is 240 requests per minute per end user.
 - Errors are `{"error": {"code": "…", "params": {…}}}` with an HTTP status. Show a message per
   `code`; the list is under "Errors" below.
+- Builds from before sign-in send `Authorization: Bearer nc_app_…` and `X-End-User: <install id>`
+  instead. This keeps working until `--require-end-user-tokens on`.
 
 ## Flow
 
@@ -102,7 +144,10 @@ X-End-User: <install id>        1-64 of A-Z a-z 0-9 . _ : @ -   (a random id mad
   - `GET /v1/partner/end-users/{id}/usage`;
   - `DELETE /v1/partner/end-users/{id}` deletes that end user's data;
   - `POST /v1/partner/end-users/{id}/allowance` grants credits, when the account requires
-    allowances.
+    allowances;
+  - `POST /v1/partner/end-users/{id}/block` blocks a signed-in end user (their tokens stop at once,
+    and no new code is sent); `DELETE …/block` unblocks.
+  - Without a server, the operator blocks: `partner.js --email … --block eu_…`.
 
 ## Errors
 
@@ -111,12 +156,23 @@ X-End-User: <install id>        1-64 of A-Z a-z 0-9 . _ : @ -   (a random id mad
 | 400 | `preset.params_invalid` (`field`, `reason`) | a bug in the request: fix it; log the field |
 | 400 | `content.text_refused` (`field`) | the text was refused: ask for a different description |
 | 400 | `partner.end_user_required` | missing or malformed `X-End-User` (a bug) |
-| 401 | `auth.required`, `auth.token_revoked`, `auth.token_expired` | the online feature is off until an app update |
+| 400 | `auth.client_invalid` | the client id is wrong or disabled (a bug, or the app is switched off) |
+| 400 | `auth.invalid_email` | ask for the address again |
+| 400 | `auth.code_invalid` (`attemptsLeft`), `auth.code_expired` | wrong or expired code (see "Sign-in") |
+| 401 | `auth.token_expired` | refresh the access token, then repeat the request |
+| 401 | `auth.refresh_invalid` | sign in again |
+| 401 | `auth.token_revoked` | signed out elsewhere, or the token was revoked: sign in again |
+| 401 | `auth.end_user_token_required` | an old build with the app token, after the switch: update the app |
+| 401 | `auth.required` | a bug: the token is missing or malformed |
+| 403 | `auth.end_user_blocked` | this end user was blocked: the online feature is off for them |
+| 429 | `auth.code_rate_limited` (`retryAfter`) | too many codes: wait |
+| 503 | `auth.sign_in_unavailable` | sign-in is down (email): try later |
 | 402 | `allowance.insufficient` (`needed`, `balance`) | out of credits for this user |
 | 402 | `credits.insufficient` | GM Cebi's account is out of credits: "temporarily unavailable" |
 | 404 | `not_found` | the job or picture is gone (or deleted after 7 days) |
 | 410 | `session.closed` (`reason`) | open a new session |
 | 429 | `quota.end_user_daily` (`limit`, `resetsAt`) | today's maps are used up: show when they reset |
+| 429 | `quota.partner_daily` (`resetsAt`) | GM Cebi's maps for today are used up across all users: try tomorrow |
 | 429 | `session.limit` (`max`) | too many games at once across GM Cebi: try again later |
 | 429 | `limit.concurrent_jobs`, `rate_limited` | wait a few seconds and retry |
 | 503 | `job.no_gpu_worker` | no GPU and none starting: retry later, or continue offline |
@@ -137,14 +193,17 @@ A job can also end `failed` with `job.error.code`:
   - the sketch for 24 hours;
   - the result for 7 days;
   - the narrative or prompt until 24 hours after the job finishes.
-- **What is not collected**: no account, name or email. The install id is the only identifier.
+- **What is collected for sign-in**: the email address is used only to send the code, through Brevo
+  (EU). NeuraCraft stores an HMAC of it, never the address, plus a random end-user id (`eu_…`) and
+  sign-up and last-seen times. No name, no store account.
 - **Where**: interactive jobs run on EU GPUs (`INTERACTIVE_REGIONS=eu`).
-- **Sub-processor**: with `ANTHROPIC_API_KEY` set, the narrative text (without any id) goes to
-  Anthropic (US) to write the English prompt. Without it, a built-in template writes the prompt and
-  the narrative stays in the service.
-- **Deleting**: "Delete my data" means `DELETE /v1/partner/end-users/{id}` from GM Cebi's server. If
-  there is no server, the app should not keep any result it doesn't need, and it should say that
-  everything expires after 7 days.
+- **Sub-processors**:
+  - with `ANTHROPIC_API_KEY` set, the narrative text (without any id) goes to Anthropic (US) to write
+    the English prompt. Without it, a built-in template writes the prompt and the narrative stays in
+    the service;
+  - Brevo (EU) sends the code emails: the address, the code and "GM Cebi".
+- **Deleting**: "Delete my account" in the app calls `DELETE /v1/me`. It deletes the end user and
+  everything stored for them at once; no GM Cebi server is needed.
 
 ## Design notes
 
