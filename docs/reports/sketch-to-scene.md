@@ -70,6 +70,48 @@ How these were made:
   - in the app, a water brush that fills the river, and a legend ("circle = tree");
   - real GM Cebi sketches added to `tests/assets/sketches`, so this check covers what GMs draw.
 
+### Colour hints: telling the model where the water is (issue #42, 2026-11-10)
+
+After the change above, GM Cebi tried the river seven ways on the live service. None of them helped:
+hatching the band, filling it, saying "a river between two banks", dropping "bridge", and an English
+prompt. The band became a walkway or a ditch, and the water filled the open ground south of it.
+
+**Why words can't fix it**
+- The scribble ControlNet sees lines only. It cannot know which side of a line is water, and to the
+  model the big empty area looks more like water than the thin band.
+- Hatching makes it worse: parallel strokes read as planks.
+- SD 1.5 cannot place a word ("river") at a position.
+
+**The spike**: img2img from a rough colour picture of the regions, with the same scribble
+ControlNet (0.8), prompt, LCM settings and seed as production. The engine does both in one step.
+- The hint: water blue, the bridge brown, the road brown, tree circles dark green, the rest grass
+  green, blurred a little. It was made by hand from GM Cebi's sketch, as an app brush layer would
+  make it.
+- Strength (how much of the hint is repainted):
+  - 0.5–0.65: the water is a blue band between the banks, the bridge crosses it, and the road
+    goes south;
+  - 0.75 and above: the water is gone again.
+
+![The hint, then strength 0.6 / 0.75 / 0.9](../images/map_color_hint_strength.jpg)
+
+**What the hint must cover**: everything.
+- Water painted on grey keeps the band, but the rest stays grey.
+- Water painted on the white sketch stays a flat drawing.
+- Bottom row: the full hint at 0.5 and 0.65.
+
+![Top: water on grey and its result; the white sketch with water. Bottom: its result; the full hint at 0.5 and 0.65](../images/map_color_hint_variants.jpg)
+
+How these were made: the engine CLI on a CPU (about 90 s a picture), one sketch, one seed. That is
+enough to choose the direction, not to tune it.
+
+**Proposal**: an optional region layer from the app.
+- **The app** paints regions with a few fixed brush colours (water, road, forest, stone floor,
+  wall, sand) and sends them as a second PNG, `inputs.regions`. Unpainted pixels are transparent.
+- **The server** turns brush colours into realistic ones and fills the unpainted ground with a
+  `ground` parameter (grass, stone, dirt, sand, snow). It blurs the result and runs img2img at
+  about 0.6, still with the scribble ControlNet.
+- **Without a region layer**, map mode stays as it is.
+
 ### Battle-map models with a usable license
 
 The spike found the base model to be the biggest quality lever, so we looked for top-down or
