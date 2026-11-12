@@ -238,7 +238,8 @@ queued ──claim──▶ leased ──first event──▶ running ──▶ 
     - **Client**: the app ships a public client id (`cli/partner-client.js`), which grants nothing.
     - **Sign-in**: the end user gets a 6-digit code by email (`POST /v1/auth/email/start`, then
       `/verify`; `mailer.ts`, Brevo). The answer is an access token `nc_eu_…` (1 hour) and a refresh
-      token `nc_rt_…` (90 days, rotated on every use, a reused one revokes its family).
+      token `nc_rt_…` (90 days, rotated on every use, a reused one revokes its family, except the
+      immediately previous one within 60 seconds, which gets the same successor back: issue #52).
     - **Identity**: an identity is HMAC(`SIGNING_KEY`, normalized address) per partner; the address
       is not stored. Its id `eu_…` fills the same `end_user` column, so quotas, allowances, ownership
       and deletion are unchanged.

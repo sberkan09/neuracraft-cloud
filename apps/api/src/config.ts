@@ -40,6 +40,7 @@ export interface Config {
   endUserAuth: {
     accessMinutes: number; // nc_eu_ access tokens
     refreshDays: number; // nc_rt_ refresh tokens (sliding: every refresh starts the period again)
+    refreshGraceSeconds: number; // a rotated refresh token may come back this long (issue #52; at most 600)
     codeMinutes: number; // emailed codes
     codeAttempts: number;
     codeEverySeconds: number; // one code per address this often
@@ -153,6 +154,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     endUserAuth: {
       accessMinutes: Number(env.END_USER_ACCESS_MINUTES ?? 60),
       refreshDays: Number(env.END_USER_REFRESH_DAYS ?? 90),
+      refreshGraceSeconds: Math.min(600, Number(env.END_USER_REFRESH_GRACE_SECONDS ?? 60)),
       codeMinutes: Number(env.SIGN_IN_CODE_MINUTES ?? 10),
       codeAttempts: Number(env.SIGN_IN_CODE_ATTEMPTS ?? 5),
       codeEverySeconds: Number(env.SIGN_IN_CODE_EVERY_SECONDS ?? 60),

@@ -44,7 +44,10 @@ All four calls take JSON and no `Authorization` header.
 3. `POST /v1/auth/token` `{client_id, grantType: "refresh_token", refreshToken}` → `200`, same shape.
    - Do this when a request answers `401 auth.token_expired` (the access token lasts an hour).
    - The refresh token changes every time: store the new one and drop the old one.
-   - A refresh token used twice ends the sign-in (`401 auth.refresh_invalid`), so refresh one at a time.
+   - Refresh one at a time. If an answer is lost (a timeout, a dropped connection, the app killed
+     before it stored the new token), send the same refresh token again within 60 seconds: the answer
+     carries the same new refresh token, so nothing is lost. Later, or with an older token, a reused
+     refresh token ends the sign-in (`401 auth.refresh_invalid`); it may have been stolen.
    - The refresh token lasts 90 days from its last use.
 4. `POST /v1/auth/revoke` `{client_id, refreshToken}` → `204`: sign out.
 
