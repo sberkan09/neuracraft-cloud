@@ -6,6 +6,7 @@
 // are mapped to the current one (`upgrade`) for at least one version.
 import { fail } from "./errors.js";
 import { CLASSIFIER_SLUG, MODERATION_FILE } from "./moderation.js";
+import { GROUNDS, regionHint } from "./regions.js";
 
 export type ParamSpec =
   | { type: "enum"; options: string[]; required?: boolean; default?: string; doc: string }
@@ -18,6 +19,9 @@ export interface InputSpec {
   contentTypes: string[]; // accepted inline
   maxBytes: number; // decoded inline size
   maxSide: number; // pixels
+  optional?: boolean; // absent from a request: the preset runs without it
+  // Turns the inline bytes into what the job uses (null: dropped). Inputs with it are inline only.
+  prepare?(bytes: Buffer, params: Record<string, unknown>): Buffer | null;
 }
 
 // Catalog models a preset uses, by slug.
@@ -64,8 +68,28 @@ const sketchToScene: Preset = {
     negative: { type: "string", maxLength: 300, doc: "What to avoid" },
     seed: { type: "int", min: 0, max: 4294967295, doc: "Noise seed (default: random)" },
     size: { type: "int", min: 512, max: 512, doc: "Picture size (512 only in v1)" },
+    ground: {
+      type: "enum",
+      options: Object.keys(GROUNDS),
+      default: "grass",
+      doc: "With regions: the colour of the unpainted ground",
+    },
   },
-  inputs: [{ name: "sketch", doc: "Terrain sketch: dark strokes on light paper, PNG", contentTypes: ["image/png"], maxBytes: 512 * 1024, maxSide: 1024 }],
+  inputs: [
+    { name: "sketch", doc: "Terrain sketch: dark strokes on light paper, PNG", contentTypes: ["image/png"], maxBytes: 512 * 1024, maxSide: 1024 },
+    {
+      name: "regions",
+      doc:
+        "Optional, map mode: the regions painted on a transparent PNG the size of the sketch, with the brushes water #2060A0, " +
+        "road #8C6E48, forest #285C28, stone floor #808080, wall #404040, sand #D2B478 (issue #42). Inline only.",
+      contentTypes: ["image/png"],
+      maxBytes: 512 * 1024,
+      maxSide: 1024,
+      optional: true,
+      // The colour hint the map-mode img2img starts from; atmosphere mode does not use it.
+      prepare: (bytes, p) => (p.mode === "map" ? regionHint(bytes, typeof p.ground === "string" ? p.ground : "grass") : null),
+    },
+  ],
   models: ["dreamshaper-8", "controlnet-scribble", "lcm-lora-sd15", "taesd"],
   moderate: "scene",
   latency: "interactive",
@@ -102,11 +126,16 @@ const sketchToScene: Preset = {
     // The LoRA with its scale (":1"): without one, the engine took an asset id starting with a digit for a scale.
     if (map) Object.assign(draw, { steps: 4, sampler: "lcm", guidance: 1.5, lora: [`${asset(m["lcm-lora-sd15"]!)}:1`] });
     else Object.assign(draw, { steps: 20, sampler: "euler", guidance: 7 });
+    const hint = map && inputs.regions;
+    // With regions (issue #42): img2img from the colour hint, keeping 40% of it. 0.5-0.65 put the water
+    // where it was painted; 0.75 and up lost it again. 6 steps x 0.6 = about the 4 LCM steps of txt2img.
+    if (hint) Object.assign(draw, { op: "img2img", in: "hint", strength: 0.6, steps: 6 });
     return {
       steps: [
         { op: "load", path: asset(inputs.sketch!), out: "sketch" },
         { op: "resize", in: "sketch", width: 512, height: 512, out: "sized" },
         { op: "scribble", in: "sized", thickness: 2, out: "lines" },
+        ...(hint ? [{ op: "load", path: asset(inputs.regions!), out: "hint" }] : []),
         draw,
         { op: "save", in: "scene", path: "scene.png" },
       ],
@@ -190,5 +219,5 @@ export const presetJson = (p: Preset) => ({
   description: p.description,
   latency: p.latency,
   params: p.params,
-  inputs: p.inputs.map((i) => ({ name: i.name, doc: i.doc, contentTypes: i.contentTypes, maxBytes: i.maxBytes, maxSide: i.maxSide })),
+  inputs: p.inputs.map((i) => ({ name: i.name, doc: i.doc, contentTypes: i.contentTypes, maxBytes: i.maxBytes, maxSide: i.maxSide, required: !i.optional })),
 });

@@ -113,10 +113,31 @@ Authorization: Bearer nc_eu_…      the end user's access token
    - What reads well in `map` mode (docs/reports/sketch-to-scene.md, "Map mode seen from above"):
      - trees as small circles or blobs become tree canopies; a road as one line or two close lines
        keeps its course;
-     - a river drawn as two thin lines may come out as water on one side only: shade the band
-       between them, or say it in the narrative ("iki kıyı arasında akan nehir");
+     - a river drawn as two thin lines may come out as water on one side only. Paint it with the
+       water brush in `regions` (below); without regions, say it in the narrative ("iki kıyı
+       arasında akan nehir");
      - corridors and small furniture (tables, chairs) are the weakest: they can merge into rooms or
        turn into other round shapes. A short narrative helps more than extra strokes.
+   - **Regions** (optional, `map` mode, issue #42): where the water, roads and so on are.
+     - `inputs.regions`: `{inline, contentType: "image/png"}`, the same size as the sketch,
+       transparent where unpainted, ≤ 512 KB. Asset references are not accepted for it.
+     - Paint with these brush colours; anti-aliased edges are fine:
+
+       | Brush | Colour |
+       |---|---|
+       | water | `#2060A0` |
+       | road / path | `#8C6E48` |
+       | forest | `#285C28` |
+       | stone floor | `#808080` |
+       | wall | `#404040` |
+       | sand | `#D2B478` |
+     - `params.ground`: the unpainted ground, one of `grass` (default), `stone`, `dirt`, `sand`,
+       `snow`.
+     - The server turns the layer into a soft colour picture and starts the image from it, so
+       painted water stays where it was painted. A layer with nothing painted, and `atmosphere`
+       mode, run as without it.
+     - Detecting support: `GET /v1/presets` lists `regions` under `sketch_to_scene`'s inputs, with
+       `required: false`, and `ground` under its params.
    - Answer: `201 {job}`; the job has `id` and `state`.
 4. **Wait for it**: `GET /v1/jobs/{id}/events` (server-sent events, with the same headers).
    - Each event is `data: <json>`:

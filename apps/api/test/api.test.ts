@@ -456,6 +456,76 @@ describe("presets", () => {
     const credits = json(await inject({ method: "GET", url: "/v1/me", headers: { cookie: a.cookie } })).credits;
     assert.equal(credits, 50000);
   });
+
+  it("turns a region layer into a colour hint for map mode (issue #42)", async () => {
+    const { PNG } = await import("pngjs");
+    const { regionHint } = await import("../src/regions.js");
+    // A water band painted across a transparent 512 x 512 layer, with an anti-aliased edge row.
+    const layer = (paint: boolean) => {
+      const p = new PNG({ width: 512, height: 512 });
+      p.data.fill(0);
+      if (paint)
+        for (let y = 200; y <= 260; y++)
+          for (let x = 0; x < 512; x++) {
+            const i = (y * 512 + x) * 4;
+            p.data.set([0x20, 0x60, 0xa0, y === 200 || y === 260 ? 128 : 255], i);
+          }
+      return PNG.sync.write(p);
+    };
+    const pixel = (png: Buffer, x: number, y: number) => {
+      const p = PNG.sync.read(png);
+      const i = (y * p.width + x) * 4;
+      return [p.data[i], p.data[i + 1], p.data[i + 2]];
+    };
+    const hint = regionHint(layer(true), "stone")!;
+    assert.deepEqual([PNG.sync.read(hint).width, PNG.sync.read(hint).height], [512, 512]);
+    assert.deepEqual(pixel(hint, 256, 230), [40, 96, 150]);     // the middle of the band: water
+    assert.deepEqual(pixel(hint, 256, 20), [128, 124, 118]);    // unpainted: the stone ground
+    const edge = pixel(hint, 256, 200)!;                        // blurred between the two
+    assert.ok(edge[2]! < 150 && edge[2]! > 118, String(edge));
+    assert.equal(regionHint(layer(false), "grass"), null);      // nothing painted
+
+    // Through the API: listed as optional, used in map mode, a sketch alone works as before.
+    const listed = json(await inject({ method: "GET", url: "/v1/presets" })).presets.find((x: { id: string }) => x.id === "sketch_to_scene");
+    assert.deepEqual(listed.inputs.map((i: { name: string; required: boolean }) => [i.name, i.required]), [["sketch", true], ["regions", false]]);
+    assert.deepEqual(listed.params.ground.options, ["grass", "stone", "dirt", "sand", "snow"]);
+    await catalog();
+    const a = await signUp(h.app);
+    await h.s.db.query("INSERT INTO ledger (user_id, kind, amount) VALUES ($1, 'grant', 1000000)", [a.id]);
+    const submit = (params: object, inputs: object) =>
+      inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie }, payload: { params, inputs } });
+    const regions = (png: Buffer) => ({ inline: png.toString("base64"), contentType: "image/png" });
+    const done = (job: { id: string }) => h.s.db.query("UPDATE jobs SET state = 'cancelled' WHERE id = $1", [job.id]);
+
+    const plain = json(await submit({ mode: "map", prompt: "a river" }, { sketch })).job;
+    assert.deepEqual(plain.workflow.steps.map((x: { op: string }) => x.op), ["load", "resize", "scribble", "txt2img", "save", "classify"]);
+    await done(plain);
+
+    const r = await submit({ mode: "map", prompt: "a river", ground: "stone", seed: 3 }, { sketch, regions: regions(layer(true)) });
+    assert.equal(r.statusCode, 201, r.body);
+    const job = json(r).job;
+    assert.deepEqual(job.workflow.steps.map((x: { op: string }) => x.op), ["load", "resize", "scribble", "load", "img2img", "save", "classify"]);
+    const draw = job.workflow.steps[4];
+    assert.deepEqual([draw.in, draw.strength, draw.steps, draw.control, draw.control_scale, draw.sampler], ["hint", 0.6, 6, "lines", 0.8, "lcm"]);
+    // The stored input is the hint, not the layer.
+    const hintAsset = /^asset:(.+)$/.exec(job.workflow.steps[3].path)![1];
+    const blob = (await h.s.db.query("SELECT sha256 FROM assets WHERE id = $1", [hintAsset])).rows[0].sha256;
+    assert.deepEqual(pixel(await h.s.storage.get(`blobs/${blob}`), 256, 20), [128, 124, 118]);
+    await done(job);
+
+    const atmosphere = json(await submit({ mode: "atmosphere", prompt: "a river" }, { sketch, regions: regions(layer(true)) })).job;
+    assert.ok(!atmosphere.workflow.steps.some((x: { op: string }) => x.op === "img2img"));
+    await done(atmosphere);
+    const empty = json(await submit({ mode: "map", prompt: "a river" }, { sketch, regions: regions(layer(false)) })).job;
+    assert.ok(!empty.workflow.steps.some((x: { op: string }) => x.op === "img2img"));
+    await done(empty);
+
+    const ref = await submit({ mode: "map", prompt: "a river" }, { sketch, regions: `asset:${hintAsset}` });
+    assert.equal(json(ref).error.params.field, "inputs.regions");
+    const broken = Buffer.concat([layer(true).subarray(0, 40), Buffer.alloc(100)]);
+    const bad = await submit({ mode: "map", prompt: "a river" }, { sketch, regions: regions(broken) });
+    assert.deepEqual([bad.statusCode, json(bad).error.params.reason], [400, "not a readable PNG picture"]);
+  });
 });
 
 describe("tokens", () => {
@@ -507,6 +577,7 @@ describe("tokens", () => {
     assert.equal((await inject({ method: "POST", url: "/v1/tokens", headers: { cookie: a.cookie }, payload: { name: "x", scopes: ["billing:write"] } })).statusCode, 400);
     assert.equal((await inject({ method: "POST", url: "/v1/tokens", headers: { cookie: a.cookie }, payload: { scopes: ["jobs:read"] } })).statusCode, 400);
   });
+
 });
 
 describe("prompt step", () => {
