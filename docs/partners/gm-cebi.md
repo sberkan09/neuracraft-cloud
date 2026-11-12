@@ -214,7 +214,9 @@ A job can also end `failed` with `job.error.code`:
 [docs/PRIVACY.md](../PRIVACY.md) has the details:
 
 - **What is kept**:
-  - the sketch for 24 hours;
+  - the sketch (and the colour hint made from the region layer) for 24 hours. During the closed beta
+    the operator keeps them for 7 days to look at testers' results; this goes back to 24 hours before
+    a public release, so declare 24 hours;
   - the result for 7 days;
   - the narrative or prompt until 24 hours after the job finishes.
 - **What is collected for sign-in**: the email address is used only to send the code, through Brevo

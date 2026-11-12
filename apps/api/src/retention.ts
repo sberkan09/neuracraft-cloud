@@ -26,10 +26,19 @@ const BLOB_GRACE_MS = 60 * 60 * 1000; // a blob row younger than this is left al
 const BATCH = 500;
 
 const hoursFrom = (now: Date, hours: number) => new Date(now.getTime() + hours * 3600_000);
+
+// INPUT_RETENTION_HOURS (config.inputRetentionHours) replaces every preset's inputHours: a closed beta
+// whose testers agreed keeps sketches and narratives longer, to look at their results. The cleanup also
+// moves the expiry of inputs still kept to the new window, so a change applies to them too.
+let inputHoursOverride: number | null = null;
+export function setInputRetentionHours(hours: number | null) {
+  inputHoursOverride = hours;
+}
+const inputHoursOf = (r: { inputHours: number }) => inputHoursOverride ?? r.inputHours;
 // When an asset of a preset job expires (null: the preset keeps it, or there is no such preset).
 export function inputExpiry(presetId: string | null | undefined, now = new Date()): Date | null {
   const r = presetId ? findPreset(presetId)?.retention : undefined;
-  return r ? hoursFrom(now, r.inputHours) : null;
+  return r ? hoursFrom(now, inputHoursOf(r)) : null;
 }
 export function outputExpiry(presetId: string | null | undefined, now = new Date()): Date | null {
   const r = presetId ? findPreset(presetId)?.retention : undefined;
@@ -71,6 +80,12 @@ export async function runRetention(db: Db, storage: Storage, now = new Date()): 
   try {
     if (!(await lock.query<{ ok: boolean }>("SELECT pg_try_advisory_lock(727004) AS ok")).rows[0]?.ok) return out;
     try {
+      if (inputHoursOverride !== null)
+        await db.query(
+          `UPDATE assets SET expires_at = created_at + make_interval(hours => $1)
+            WHERE kind = 'input' AND expires_at IS NOT NULL AND expires_at > $2 AND expires_at <> created_at + make_interval(hours => $1)`,
+          [inputHoursOverride, now],
+        );
       await cleanup(db, storage, now, out);
     } finally {
       await lock.query("SELECT pg_advisory_unlock(727004)");
@@ -138,7 +153,7 @@ async function cleanup(db: Db, storage: Storage, now: Date, out: CleanupResult) 
             AND coalesce(j.finished_at, j.created_at) <= $2
             AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.job_id = j.id AND r.status = 'open')
           LIMIT $3`,
-        [p.id, hoursFrom(now, -p.retention.inputHours), BATCH],
+        [p.id, hoursFrom(now, -inputHoursOf(p.retention)), BATCH],
       );
       for (const j of r.rows)
         await db.query("UPDATE jobs SET prompt_info = $2, workflow = $3, scrubbed_at = $4 WHERE id = $1", [

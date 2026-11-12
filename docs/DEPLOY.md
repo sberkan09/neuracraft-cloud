@@ -101,6 +101,13 @@ GitHub → Settings → Secrets and variables → Actions:
 - **Logs:** `docker compose logs -f api`.
 - **Capacity:** `docker compose exec db psql -U nc neuracraft -c "SELECT at, kind, detail FROM capacity_events ORDER BY at DESC LIMIT 20"`.
 - **Usage export:** docs/USAGE_LOG.md.
+- **Testers' results** (closed beta only, docs/PRIVACY.md): the last 10 maps with their sketch,
+  colour hint, result and texts, as one archive:
+  ```
+  docker compose exec -T api node apps/api/dist/src/cli/job-export.js --last 10 > jobs.tar.gz
+  ```
+  Then, on your computer: `scp -i ~/.ssh/neuracraft_deploy deploy@<ip>:/opt/neuracraft/jobs.tar.gz .`
+  Other filters: `--since 2026-11-12`, `--job <id>` (repeatable), `--end-user <id>`.
 - **Restoring the database:**
   ```
   gunzip -c backups/db-Mon.sql.gz | docker compose exec -T db psql -U nc neuracraft

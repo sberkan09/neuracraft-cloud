@@ -13,8 +13,8 @@ code it describes: `apps/api/src/retention.ts`, `moderation.ts`, `prompts.ts`.
 | Signed-in partner end user | a random id (`eu_…`), an HMAC of the normalized email address (never the address itself), sign-up and last-seen times, blocked or not | until the end user deletes their account or the partner deletes them | the end user (`GET /v1/me`); the partner's server |
 | Sign-in codes | an HMAC of the address, a hash of the 6-digit code, attempts | **1 day** (valid for 10 minutes) | nobody: only checked |
 | Sign-in tokens | hashes of access tokens (1 hour) and refresh tokens (90 days, renewed on use); after a refresh, the new refresh token encrypted on the old one for the 60-second retry window | until 1 day after they expire or are revoked; the encrypted copy at most 10 minutes | nobody: only checked |
-| Preset input | the sketch (PNG) | **24 hours** after the job is submitted | its owner; operators while a report is open |
-| Narrative and prompts | "Nehrin üzerinde ahşap bir köprü", the English prompt written from it | until **24 hours** after the job finishes | its owner (job details); operators while a report is open |
+| Preset input | the sketch (PNG); the colour hint made from the region layer (the layer itself is not kept) | **24 hours** after the job is submitted (`INPUT_RETENTION_HOURS`; **7 days** during the closed beta, below) | its owner; operators while a report is open, or during the beta |
+| Narrative and prompts | "Nehrin üzerinde ahşap bir köprü", the English prompt written from it | until **24 hours** after the job finishes (the same setting) | its owner (job details); operators while a report is open, or during the beta |
 | Preset result | the generated scene (PNG) | **7 days** | its owner; operators while a report is open |
 | Uploads and results outside presets | pictures, 3D models, clips the user uploads or makes with workflows | until the user deletes them | the user |
 | Job record | timing, cost, preset and version, prompt instruction version, classifier scores | as long as the account | the user; operators |
@@ -24,6 +24,12 @@ code it describes: `apps/api/src/retention.ts`, `moderation.ts`, `prompts.ts`.
 
 The logs never hold request bodies (narratives, prompts, pictures), query strings, headers or signed
 storage URLs.
+
+**Closed beta (2026-11).** The few testers of the beta know that the operator looks at their requests
+to improve the results, and agreed to it. Meanwhile `INPUT_RETENTION_HOURS=168` keeps sketches, colour
+hints, narratives and prompts for 7 days instead of 24 hours, and the operator exports testers' jobs
+with `cli/job-export.js`. Before a public release the setting goes back to 24 hours and exports stop;
+the store declarations follow the 24-hour figures.
 
 ### How deletion works
 
