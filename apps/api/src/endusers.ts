@@ -5,7 +5,7 @@
 // end_user column app tokens with X-End-User fill, so quotas, allowances, ownership and deletion work
 // unchanged. No plaintext address is stored: an identity is HMAC(SIGNING_KEY, normalized address), so
 // rotating SIGNING_KEY starts every end user afresh.
-import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
@@ -124,17 +124,47 @@ export interface TokenResponse {
   endUser: { id: string };
 }
 
-async function issueTokens(c: pg.PoolClient, config: Config, client: PartnerClient, endUser: string, family: string): Promise<TokenResponse> {
+async function issueAccess(c: pg.PoolClient, config: Config, client: PartnerClient, endUser: string, family: string): Promise<string> {
   const access = `nc_eu_${randomBytes(24).toString("base64url")}`;
-  const refresh = `nc_rt_${randomBytes(32).toString("base64url")}`;
-  const a = config.endUserAuth;
   await c.query(
-    `INSERT INTO end_user_tokens (user_id, end_user, client_id, kind, family, secret_hash, expires_at) VALUES
-       ($1, $2, $3, 'access', $4, $5, now() + make_interval(mins => $7)),
-       ($1, $2, $3, 'refresh', $4, $6, now() + make_interval(days => $8))`,
-    [client.userId, endUser, client.id, family, sha256(access), sha256(refresh), a.accessMinutes, a.refreshDays],
+    `INSERT INTO end_user_tokens (user_id, end_user, client_id, kind, family, secret_hash, expires_at)
+     VALUES ($1, $2, $3, 'access', $4, $5, now() + make_interval(mins => $6))`,
+    [client.userId, endUser, client.id, family, sha256(access), config.endUserAuth.accessMinutes],
   );
-  return { accessToken: access, tokenType: "Bearer", expiresIn: a.accessMinutes * 60, refreshToken: refresh, endUser: { id: endUser } };
+  return access;
+}
+
+async function issueTokens(c: pg.PoolClient, config: Config, client: PartnerClient, endUser: string, family: string): Promise<TokenResponse & { refreshId: string }> {
+  const access = await issueAccess(c, config, client, endUser, family);
+  const refresh = `nc_rt_${randomBytes(32).toString("base64url")}`;
+  const r = await c.query<{ id: string }>(
+    `INSERT INTO end_user_tokens (user_id, end_user, client_id, kind, family, secret_hash, expires_at)
+     VALUES ($1, $2, $3, 'refresh', $4, $5, now() + make_interval(days => $6)) RETURNING id`,
+    [client.userId, endUser, client.id, family, sha256(refresh), config.endUserAuth.refreshDays],
+  );
+  return { ...answer(config, access, refresh, endUser), refreshId: r.rows[0]!.id };
+}
+
+const answer = (config: Config, access: string, refresh: string, endUser: string): TokenResponse => ({
+  accessToken: access, tokenType: "Bearer", expiresIn: config.endUserAuth.accessMinutes * 60, refreshToken: refresh, endUser: { id: endUser },
+});
+
+// The successor's secret, kept on the previous refresh token for the grace window (issue #52).
+const graceKey = (config: Config) => createHmac("sha256", config.signingKey).update("refresh-grace/v1").digest();
+function seal(config: Config, secret: string): Buffer {
+  const iv = randomBytes(12);
+  const c = createCipheriv("aes-256-gcm", graceKey(config), iv);
+  const ct = Buffer.concat([c.update(secret, "utf8"), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]);
+}
+function open(config: Config, box: Buffer): string | null {
+  try {
+    const d = createDecipheriv("aes-256-gcm", graceKey(config), box.subarray(0, 12));
+    d.setAuthTag(box.subarray(12, 28));
+    return Buffer.concat([d.update(box.subarray(28)), d.final()]).toString("utf8");
+  } catch {
+    return null;  // SIGNING_KEY changed
+  }
 }
 
 // POST /v1/auth/email/verify. The identity is made on the first success.
@@ -163,7 +193,8 @@ export async function verifyEmailSignIn(db: Db, config: Config, client: PartnerC
       [client.userId, `eu_${randomBytes(12).toString("base64url")}`, key],
     );
     if (eu.rows[0]!.blocked) return { blocked: true };
-    return { ok: await issueTokens(c, config, client, eu.rows[0]!.end_user, randomUUID()) };
+    const { refreshId: _, ...tokens } = await issueTokens(c, config, client, eu.rows[0]!.end_user, randomUUID());
+    return { ok: tokens };
   });
   if ("ok" in out) return out.ok;
   if ("blocked" in out) fail(403, "auth.end_user_blocked");
@@ -172,28 +203,46 @@ export async function verifyEmailSignIn(db: Db, config: Config, client: PartnerC
 }
 
 // POST /v1/auth/token (grantType refresh_token). Rotates the refresh token; a rotated one presented
-// again means it leaked: the whole family (the access tokens too) is revoked.
+// again means it leaked, and the whole family (the access tokens too) is revoked. Except within the
+// grace window (END_USER_REFRESH_GRACE_SECONDS, issue #52): the immediately previous token, while its
+// successor is still unused, gets that same successor back with a fresh access token, so an answer
+// lost on the way to the app (or two refreshes racing) ends in one chain instead of a new sign-in.
 export async function refreshTokens(db: Db, config: Config, client: PartnerClient, token: unknown): Promise<TokenResponse> {
   if (typeof token !== "string" || !REFRESH_TOKEN.test(token)) fail(401, "auth.refresh_invalid");
   type Out = { ok: TokenResponse } | { invalid: true } | { blocked: true };
   const out = await tx<Out>(db, async (c) => {
-    const r = await c.query<{ id: string; end_user: string; client_id: string; family: string; live: boolean; used: boolean; blocked: boolean }>(
+    const r = await c.query<{
+      id: string; end_user: string; client_id: string; family: string; live: boolean; used: boolean; in_grace: boolean;
+      successor: string | null; successor_secret: Buffer | null; blocked: boolean;
+    }>(
       `SELECT t.id, t.end_user, t.client_id, t.family, (t.expires_at > now() AND t.revoked_at IS NULL) AS live, t.used_at IS NOT NULL AS used,
+              coalesce(t.used_at > now() - make_interval(secs => $2), false) AS in_grace, t.successor, t.successor_secret,
               eu.blocked_at IS NOT NULL AS blocked
          FROM end_user_tokens t JOIN partner_end_users eu ON eu.user_id = t.user_id AND eu.end_user = t.end_user
         WHERE t.secret_hash = $1 AND t.kind = 'refresh' FOR UPDATE OF t`,
-      [sha256(token as string)],
+      [sha256(token as string), config.endUserAuth.refreshGraceSeconds],
     );
     const t = r.rows[0];
     if (!t || t.client_id !== client.id || !t.live) return { invalid: true };
     if (t.used) {
-      await c.query("UPDATE end_user_tokens SET revoked_at = now() WHERE family = $1 AND revoked_at IS NULL", [t.family]);
+      if (t.in_grace && t.successor && t.successor_secret && !t.blocked) {
+        const next = await c.query<{ ok: boolean }>(
+          "SELECT (used_at IS NULL AND revoked_at IS NULL AND expires_at > now()) AS ok FROM end_user_tokens WHERE id = $1 FOR UPDATE",
+          [t.successor],
+        );
+        const secret = next.rows[0]?.ok ? open(config, t.successor_secret) : null;
+        if (secret) return { ok: answer(config, await issueAccess(c, config, client, t.end_user, t.family), secret, t.end_user) };
+      }
+      await c.query("UPDATE end_user_tokens SET revoked_at = now(), successor_secret = NULL WHERE family = $1 AND (revoked_at IS NULL OR successor_secret IS NOT NULL)", [t.family]);
       return { invalid: true };
     }
     if (t.blocked) return { blocked: true };
-    await c.query("UPDATE end_user_tokens SET used_at = now() WHERE id = $1", [t.id]);
+    const { refreshId, ...tokens } = await issueTokens(c, config, client, t.end_user, t.family);
+    await c.query("UPDATE end_user_tokens SET used_at = now(), successor = $2, successor_secret = $3 WHERE id = $1", [t.id, refreshId, seal(config, tokens.refreshToken)]);
+    // Only the immediately previous token may come back: the one before it loses its copy now.
+    await c.query("UPDATE end_user_tokens SET successor_secret = NULL WHERE successor = $1", [t.id]);
     await c.query("UPDATE partner_end_users SET last_seen_at = now() WHERE user_id = $1 AND end_user = $2", [client.userId, t.end_user]);
-    return { ok: await issueTokens(c, config, client, t.end_user, t.family) };
+    return { ok: tokens };
   });
   if ("ok" in out) return out.ok;
   if ("blocked" in out) fail(403, "auth.end_user_blocked");

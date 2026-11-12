@@ -12,7 +12,7 @@ code it describes: `apps/api/src/retention.ts`, `moderation.ts`, `prompts.ts`.
 | Partner end user | an opaque id chosen by the partner app (an install id); no email, no store account | until the partner deletes it | the partner app acting for that end user |
 | Signed-in partner end user | a random id (`eu_…`), an HMAC of the normalized email address (never the address itself), sign-up and last-seen times, blocked or not | until the end user deletes their account or the partner deletes them | the end user (`GET /v1/me`); the partner's server |
 | Sign-in codes | an HMAC of the address, a hash of the 6-digit code, attempts | **1 day** (valid for 10 minutes) | nobody: only checked |
-| Sign-in tokens | hashes of access tokens (1 hour) and refresh tokens (90 days, renewed on use) | until 1 day after they expire or are revoked | nobody: only checked |
+| Sign-in tokens | hashes of access tokens (1 hour) and refresh tokens (90 days, renewed on use); after a refresh, the new refresh token encrypted on the old one for the 60-second retry window | until 1 day after they expire or are revoked; the encrypted copy at most 10 minutes | nobody: only checked |
 | Preset input | the sketch (PNG) | **24 hours** after the job is submitted | its owner; operators while a report is open |
 | Narrative and prompts | "Nehrin üzerinde ahşap bir köprü", the English prompt written from it | until **24 hours** after the job finishes | its owner (job details); operators while a report is open |
 | Preset result | the generated scene (PNG) | **7 days** | its owner; operators while a report is open |

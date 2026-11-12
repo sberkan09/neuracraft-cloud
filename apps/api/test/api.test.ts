@@ -1598,7 +1598,8 @@ describe("end-user sign-in (issue #48)", () => {
     assert.equal(t1.endUser.id, t.endUser.id);
     assert.notEqual(t1.refreshToken, t.refreshToken);
     assert.equal((await inject({ method: "GET", url: "/v1/me", headers: bearer(t1.accessToken) })).statusCode, 200);
-    // The old refresh token again: the whole family goes, access tokens too.
+    // The old refresh token again, after the grace window: the whole family goes, access tokens too.
+    await h.s.db.query("UPDATE end_user_tokens SET used_at = now() - interval '61 seconds' WHERE used_at IS NOT NULL");
     assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t.refreshToken })).error.code, "auth.refresh_invalid");
     assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t1.refreshToken })).error.code, "auth.refresh_invalid");
     assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: bearer(t1.accessToken) })).error.code, "auth.token_revoked");
@@ -1615,6 +1616,49 @@ describe("end-user sign-in (issue #48)", () => {
     assert.equal((await post("/v1/auth/revoke", { client_id, refreshToken: t2.refreshToken })).statusCode, 204);
     assert.equal(json(await post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken: t2.refreshToken })).error.code, "auth.refresh_invalid");
     assert.equal((await post("/v1/auth/revoke", { client_id, refreshToken: "nc_rt_unknown" })).statusCode, 204);
+  });
+
+  it("lets the previous refresh token back within the grace window (issue #52)", async () => {
+    const { client_id } = await setup();
+    const refresh = (refreshToken: string) => post("/v1/auth/token", { client_id, grantType: "refresh_token", refreshToken });
+    const a = await signIn(client_id, "grace@example.com");
+    const b = json(await refresh(a.refreshToken));
+    // The answer was lost: A again gets B back, with a fresh access token.
+    const again = await refresh(a.refreshToken);
+    assert.equal(again.statusCode, 200, again.body);
+    assert.equal(json(again).refreshToken, b.refreshToken);
+    assert.notEqual(json(again).accessToken, b.accessToken);
+    for (const access of [b.accessToken, json(again).accessToken]) assert.equal((await inject({ method: "GET", url: "/v1/me", headers: bearer(access) })).statusCode, 200);
+    // One chain: B goes on, and once B is rotated A is two generations old, even inside the window.
+    const c = json(await refresh(b.refreshToken));
+    assert.match(c.refreshToken, /^nc_rt_/);
+    assert.equal(json(await refresh(a.refreshToken)).error.code, "auth.refresh_invalid");
+    assert.equal(json(await refresh(c.refreshToken)).error.code, "auth.refresh_invalid");  // the chain was revoked
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM end_user_tokens WHERE successor_secret IS NOT NULL AND end_user = $1", [a.endUser.id])).rows[0].n), 0);
+
+    // Two refreshes racing with the same token: both succeed with the same successor.
+    await age();
+    const d = await signIn(client_id, "grace@example.com");
+    const [r1, r2] = await Promise.all([refresh(d.refreshToken), refresh(d.refreshToken)]);
+    assert.equal(r1.statusCode, 200, r1.body);
+    assert.equal(r2.statusCode, 200, r2.body);
+    assert.equal(json(r1).refreshToken, json(r2).refreshToken);
+    assert.equal((await refresh(json(r1).refreshToken)).statusCode, 200);
+
+    // After the window: revoked, as before.
+    await age();
+    const e = await signIn(client_id, "grace@example.com");
+    const f = json(await refresh(e.refreshToken));
+    await h.s.db.query("UPDATE end_user_tokens SET used_at = now() - interval '61 seconds' WHERE used_at IS NOT NULL");
+    assert.equal(json(await refresh(e.refreshToken)).error.code, "auth.refresh_invalid");
+    assert.equal(json(await refresh(f.refreshToken)).error.code, "auth.refresh_invalid");
+    // Retention drops the kept secrets after 10 minutes.
+    const g = await signIn(client_id, "grace2@example.com");
+    await refresh(g.refreshToken);
+    await h.s.db.query("UPDATE end_user_tokens SET used_at = now() - interval '11 minutes' WHERE successor_secret IS NOT NULL");
+    const { runRetention } = await import("../src/retention.js");
+    await runRetention(h.s.db, h.s.storage);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM end_user_tokens WHERE successor_secret IS NOT NULL")).rows[0].n), 0);
   });
 
   it("blocks an end user from the partner's server", async () => {

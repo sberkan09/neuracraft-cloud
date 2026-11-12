@@ -164,4 +164,6 @@ async function cleanup(db: Db, storage: Storage, now: Date, out: CleanupResult) 
   // and tokens a day after they expired or were revoked.
   await db.query("DELETE FROM sign_in_codes WHERE created_at <= $1", [hoursFrom(now, -24)]);
   await db.query("DELETE FROM end_user_tokens WHERE coalesce(revoked_at, expires_at) <= $1", [hoursFrom(now, -24)]);
+  // The successor's secret kept for the refresh grace window (issue #52; at most 10 minutes).
+  await db.query("UPDATE end_user_tokens SET successor_secret = NULL WHERE successor_secret IS NOT NULL AND used_at <= $1", [new Date(now.getTime() - 600_000)]);
 }
