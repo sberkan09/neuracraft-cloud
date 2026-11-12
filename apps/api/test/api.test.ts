@@ -526,6 +526,66 @@ describe("presets", () => {
     const bad = await submit({ mode: "map", prompt: "a river" }, { sketch, regions: regions(broken) });
     assert.deepEqual([bad.statusCode, json(bad).error.params.reason], [400, "not a readable PNG picture"]);
   });
+
+  it("keeps inputs longer during a beta (INPUT_RETENTION_HOURS) and exports jobs with their pictures", async () => {
+    const { setInputRetentionHours, runRetention } = await import("../src/retention.js");
+    const { PNG } = await import("pngjs");
+    const { execFileSync } = await import("node:child_process");
+    const { gunzipSync } = await import("node:zlib");
+    await catalog();
+    const a = await signUp(h.app);
+    await h.s.db.query("INSERT INTO ledger (user_id, kind, amount) VALUES ($1, 'grant', 1000000)", [a.id]);
+    const layer = new PNG({ width: 64, height: 64 });
+    layer.data.fill(0);
+    for (let i = 0; i < 64 * 20; i++) layer.data.set([0x20, 0x60, 0xa0, 255], i * 4);
+    const submit = () =>
+      inject({ method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { cookie: a.cookie },
+        payload: { params: { mode: "map", prompt: "a river", seed: 9 }, inputs: { sketch, regions: { inline: PNG.sync.write(layer).toString("base64"), contentType: "image/png" } } } });
+    const expiryHours = async (jobId: string) =>
+      (await h.s.db.query<{ h: number }>(
+        `SELECT round(extract(epoch FROM a.expires_at - a.created_at) / 3600) AS h FROM jobs j, jsonb_array_elements(j.workflow->'steps') st
+           JOIN assets a ON 'asset:' || a.id = st->>'path' WHERE j.id = $1 AND st->>'op' = 'load' LIMIT 1`, [jobId])).rows[0]!.h;
+    const before = json(await submit()).job;
+    assert.equal(Number(await expiryHours(before.id)), 24);
+    try {
+      setInputRetentionHours(168);
+      const job = json(await submit()).job;
+      assert.equal(Number(await expiryHours(job.id)), 168);
+      await runRetention(h.s.db, h.s.storage);  // inputs already kept move to the new window too
+      assert.equal(Number(await expiryHours(before.id)), 168);
+
+      // A result, as a worker would upload it.
+      const result = PNG.sync.write(new PNG({ width: 8, height: 8 }));
+      const { createHash } = await import("node:crypto");
+      const sha = createHash("sha256").update(result).digest("hex");
+      await h.s.storage.put(`blobs/${sha}`, result);
+      await h.s.db.query("INSERT INTO blobs (sha256, bytes) VALUES ($1, $2) ON CONFLICT DO NOTHING", [sha, result.length]);
+      const out = await h.s.db.query<{ id: string }>("INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes) VALUES ($1, 'output', 'scene.png', 'image/png', $2, $3) RETURNING id", [a.id, sha, result.length]);
+      await h.s.db.query("INSERT INTO job_outputs (job_id, name, asset_id) VALUES ($1, 'scene.png', $2)", [job.id, out.rows[0]!.id]);
+      await h.s.db.query("UPDATE jobs SET state = 'succeeded', finished_at = now() WHERE id IN ($1, $2)", [job.id, before.id]);
+
+      const tgz = execFileSync("node", ["dist/src/cli/job-export.js", "--job", job.id], {
+        env: { ...process.env, DATABASE_URL: h.s.config.databaseUrl, STORAGE_DIR: h.s.config.storage.kind === "local" ? h.s.config.storage.dir : "" },
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const tar = gunzipSync(tgz);
+      const names: string[] = [];
+      for (let at = 0; at + 512 <= tar.length && tar[at] !== 0; ) {
+        const name = tar.subarray(at, at + 100).toString().replace(/\0.*$/s, "");
+        const size = parseInt(tar.subarray(at + 124, at + 135).toString(), 8);
+        names.push(name);
+        if (name.endsWith("job.json")) {
+          const info = JSON.parse(tar.subarray(at + 512, at + 512 + size).toString());
+          assert.equal(info.regions, true);
+          assert.equal(info.generation.prompt.includes("river"), true);
+        }
+        at += 512 + Math.ceil(size / 512) * 512;
+      }
+      assert.deepEqual(names.map((n) => n.split("/").pop()).sort(), ["hint.png", "index.txt", "job.json", "scene.png", "sketch.png"]);
+    } finally {
+      setInputRetentionHours(null);
+    }
+  });
 });
 
 describe("tokens", () => {

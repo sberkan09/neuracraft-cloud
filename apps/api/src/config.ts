@@ -21,6 +21,8 @@ export interface Config {
   moderationThresholds: string; // labels of the output classifier that hold a result: "nsfw=0.5"
   interactiveRegions: string[]; // interactive presets run only on workers in these regions; [] = anywhere
   retentionEvery: number; // seconds between cleanups (retention.ts); 0 = never
+  inputRetentionHours: number | null; // replaces the presets' inputHours (sketches, narratives); null: the presets'
+
   interactiveGraceSeconds: number; // interactive jobs are refused when no GPU worker was seen for this long
   ssePingSeconds: number; // a job's event stream pings (and looks at the job) this often
   interactiveOnCpu: boolean; // development and tests only: interactive jobs may run on CPU workers (and need no GPU)
@@ -104,6 +106,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     moderationThresholds: env.MODERATION_THRESHOLDS ?? "nsfw=0.5",
     interactiveRegions: (env.INTERACTIVE_REGIONS ?? "").split(",").map((r) => r.trim()).filter(Boolean),
     retentionEvery: Number(env.RETENTION_EVERY_SECONDS ?? 600),
+    inputRetentionHours: env.INPUT_RETENTION_HOURS ? Number(env.INPUT_RETENTION_HOURS) : null,
     interactiveGraceSeconds: Number(env.INTERACTIVE_GRACE_SECONDS ?? 60),
     ssePingSeconds: Number(env.SSE_PING_SECONDS ?? 15),
     interactiveOnCpu: env.INTERACTIVE_ON_CPU === "1",
