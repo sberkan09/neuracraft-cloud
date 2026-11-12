@@ -55,7 +55,7 @@ export async function warmupJobs(db: Db, storage: Storage): Promise<ClaimedJob[]
       const { sha256, bytes } = await storage.finalize(key);
       blank = { assetId: WARMUP_INPUT, name: "blank.png", sha256, bytes, url: storage.downloadUrl(blobKey(sha256), 3600), kind: "input" };
     }
-    const inputs = Object.fromEntries(p.inputs.map((i) => [i.name, WARMUP_INPUT]));
+    const inputs = Object.fromEntries(p.inputs.filter((i) => !i.optional).map((i) => [i.name, WARMUP_INPUT]));
     jobs.push({
       jobId: `warmup-${p.id}`,
       workflow: moderatedWorkflow(p, p.warmup, inputs, models),

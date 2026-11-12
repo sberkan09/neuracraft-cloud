@@ -32,13 +32,28 @@ export async function presetRoutes(app: FastifyInstance, s: Services) {
     const inline: { name: string; bytes: Buffer; contentType: string }[] = [];
     for (const spec of preset.inputs) {
       const v = (given as Record<string, unknown>)[spec.name];
-      if (v === undefined) fail(400, "preset.params_invalid", { field: `inputs.${spec.name}`, reason: "required" });
+      if (v === undefined) {
+        if (spec.optional) continue;
+        fail(400, "preset.params_invalid", { field: `inputs.${spec.name}`, reason: "required" });
+      }
       if (typeof v === "string") {
+        if (spec.prepare) fail(400, "preset.params_invalid", { field: `inputs.${spec.name}`, reason: "inline only: {inline, contentType}" });
         const m = ASSET.exec(v) ?? fail(400, "preset.params_invalid", { field: `inputs.${spec.name}`, reason: "asset:<id> or {inline, contentType}" });
         refs[spec.name] = m[1]!;
       } else if (typeof v === "object" && v !== null) {
         const o = v as { inline?: unknown; contentType?: unknown };
-        inline.push({ name: spec.name, bytes: inlinePicture(spec, o), contentType: String(o.contentType) });
+        let bytes = inlinePicture(spec, o);
+        if (spec.prepare) {
+          let prepared: Buffer | null;
+          try {
+            prepared = spec.prepare(bytes, params);
+          } catch {
+            return fail(400, "preset.params_invalid", { field: `inputs.${spec.name}`, reason: "not a readable PNG picture" });
+          }
+          if (!prepared) continue;  // not used (nothing painted, or another mode)
+          bytes = prepared;
+        }
+        inline.push({ name: spec.name, bytes, contentType: String(o.contentType) });
       } else fail(400, "preset.params_invalid", { field: `inputs.${spec.name}`, reason: "asset:<id> or {inline, contentType}" });
     }
     const found = await s.db.query<{ slug: string; id: string }>(

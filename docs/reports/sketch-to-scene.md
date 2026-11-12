@@ -104,13 +104,20 @@ ControlNet (0.8), prompt, LCM settings and seed as production. The engine does b
 How these were made: the engine CLI on a CPU (about 90 s a picture), one sketch, one seed. That is
 enough to choose the direction, not to tune it.
 
-**Proposal**: an optional region layer from the app.
+**Built** (2026-11-12, `apps/api/src/regions.ts`): an optional region layer from the app.
 - **The app** paints regions with a few fixed brush colours (water, road, forest, stone floor,
   wall, sand) and sends them as a second PNG, `inputs.regions`. Unpainted pixels are transparent.
 - **The server** turns brush colours into realistic ones and fills the unpainted ground with a
   `ground` parameter (grass, stone, dirt, sand, snow). It blurs the result and runs img2img at
   about 0.6, still with the scribble ControlNet.
 - **Without a region layer**, map mode stays as it is.
+- **The workflow**: img2img from the hint (strength 0.6, 6 LCM steps, about the 4 of txt2img), the
+  same scribble ControlNet at 0.8 and the same prompt.
+- **Check**: the production workflow, run with the engine CLI on a CPU, on GM Cebi's sketch with the
+  same seed. With only the water painted, the river is a band between its banks with the bridge
+  across it; the open ground stays grass. Painting the trees and the road too sharpens them.
+
+![Sketch; today's result; the region layer; water painted only; water, forest and road](../images/map_regions_production.jpg)
 
 ### Battle-map models with a usable license
 
