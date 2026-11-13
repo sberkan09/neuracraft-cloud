@@ -140,7 +140,8 @@ export async function jobs(db: Db, storage: Storage, operator: string, f: JobFil
   const params: unknown[] = [];
   const p = (v: unknown) => (params.push(v), `$${params.length}`);
   if (f.account) where.push(`j.user_id = ${p(f.account)}`);
-  if (f.endUser) where.push(`j.end_user = ${p(f.endUser)}`);
+  // The start of an end-user id is enough (LIKE's wildcards escaped: ids contain "_").
+  if (f.endUser) where.push(`j.end_user LIKE ${p(f.endUser.replace(/[\\%_]/g, (c) => `\\${c}`) + "%")}`);
   if (f.preset) where.push(`j.preset = ${p(f.preset)}`);
   if (f.state) where.push(`j.state = ${p(f.state)}`);
   if (f.regions !== undefined) where.push(`${f.regions ? "" : "NOT "}jsonb_path_exists(j.workflow, '$.steps[*] ? (@.op == "img2img")')`);

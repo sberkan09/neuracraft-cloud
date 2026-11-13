@@ -1,7 +1,7 @@
 // The operator console (#admin): the state of the whole service, across accounts. A partner such as
 // GM Cebi is one account with its own end users. Metadata of every account; pictures and texts only of
 // accounts that granted support access, or under an open report (the API decides, and logs each view).
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type AdminAccount, type AdminAccountRow, type AdminAuditEntry, type AdminJob, type AdminOverview, type AdminReport } from "../api";
 import { useErrorText } from "../useError";
@@ -411,15 +411,21 @@ function Jobs({ filter, setFilter }: { filter: Record<string, string>; setFilter
   const [jobs, setJobs] = useState<AdminJob[] | null>(null);
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
+  const [endUser, setEndUser] = useState(filter.endUser ?? "");
+  const latest = useRef(0);  // only the newest request's answer is shown
   const load = useCallback(
-    (before?: string) =>
-      api.admin
+    (before?: string) => {
+      const n = ++latest.current;
+      setError("");
+      return api.admin
         .jobs({ ...filter, limit: "24", ...(before ? { before } : {}) })
         .then((r) => {
+          if (n !== latest.current) return;
           setJobs((old) => (before && old ? [...old, ...r.jobs] : r.jobs));
           setMore(r.jobs.length === 24);
         })
-        .catch((e) => setError(errorText(e))),
+        .catch((e) => n === latest.current && setError(errorText(e)));
+    },
     [filter, errorText],
   );
   useEffect(() => {
@@ -432,6 +438,14 @@ function Jobs({ filter, setFilter }: { filter: Record<string, string>; setFilter
     else delete next[k];
     setFilter(next);
   };
+  // The end-user box filters once typing pauses.
+  useEffect(() => setEndUser(filter.endUser ?? ""), [filter.endUser]);
+  useEffect(() => {
+    if (endUser.trim() === (filter.endUser ?? "")) return;
+    const timer = setTimeout(() => set("endUser", endUser.trim()), 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endUser]);
   return (
     <section className="card">
       <div className="filters">
@@ -446,7 +460,7 @@ function Jobs({ filter, setFilter }: { filter: Record<string, string>; setFilter
         </label>
         <label>
           {t("admin.endUser")}
-          <input value={filter.endUser ?? ""} onChange={(e) => set("endUser", e.target.value.trim())} placeholder="eu_… / install id" />
+          <input value={endUser} onChange={(e) => setEndUser(e.target.value)} placeholder="eu_… / install id" />
         </label>
         <label>
           {t("admin.jobs.state")}
