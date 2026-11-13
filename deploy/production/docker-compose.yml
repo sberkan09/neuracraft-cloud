@@ -77,6 +77,17 @@ services:
       - caddy:/data
     logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
 
+  # Container logs in a browser, read-only (no start/stop, no shell: Dozzle's defaults). Bound to the
+  # server's loopback only: reach it through an SSH tunnel (docs/DEPLOY.md, "Day to day").
+  logs:
+    image: amir20/dozzle:v11.3.5
+    restart: unless-stopped
+    environment:
+      DOZZLE_NO_ANALYTICS: "true"
+    ports: ["127.0.0.1:8081:8080"]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    logging: { driver: json-file, options: { max-size: "5m", max-file: "2" } }
+
 volumes:
   db:
   storage:
