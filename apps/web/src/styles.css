@@ -154,6 +154,10 @@ ul.tokens li { display: block; }
 .admin-tabs button { white-space: nowrap; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
 .admin-grid .card { margin-bottom: 0; }
+/* Grid items default to min-width: auto, so a wide table inside one stretched the whole page. */
+.admin-grid > * { min-width: 0; }
+.admin .row.spread { flex-wrap: wrap; gap: 8px; }
+.admin .row.spread h2 { overflow-wrap: anywhere; }
 .wide-card { grid-column: 1 / -1; }
 .card h3 { font-size: 15px; margin: 14px 0 8px; }
 ul.plain, ul.events, ul.daily { list-style: none; margin: 0; padding: 0; }
@@ -177,6 +181,8 @@ ul.daily li { display: grid; grid-template-columns: 90px 1fr 48px; gap: 10px; al
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.filters > label { min-width: 0; }
+.filters select, .filters input { width: 100%; box-sizing: border-box; }
 .job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin: 8px 0 16px; }
 .job-item { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .job-item.failed { border-color: color-mix(in srgb, var(--error) 45%, var(--line)); }
@@ -186,4 +192,13 @@ ul.daily li { display: grid; grid-template-columns: 90px 1fr 48px; gap: 10px; al
 .quote { margin: 0; font-size: 14px; }
 .report { border-top: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 8px; }
 .row.wrap { flex-wrap: wrap; }
-@media (max-width: 600px) { .admin-grid { grid-template-columns: 1fr; } .job-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  .admin-grid { grid-template-columns: 1fr; }
+  .job-grid { grid-template-columns: 1fr; }
+  /* All five tabs visible, in rows, instead of a strip that hides the last ones. */
+  .admin-tabs { display: grid; grid-template-columns: repeat(3, 1fr); overflow: visible; }
+  .admin-tabs button { white-space: normal; padding-left: 6px; padding-right: 6px; }
+  .admin .filters { grid-template-columns: 1fr 1fr; }
+  .admin input:not([type="checkbox"]), .admin select { max-width: 100%; min-width: 0; }
+  .facts dd { max-width: 55%; }
+}
