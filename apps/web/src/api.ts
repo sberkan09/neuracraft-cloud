@@ -68,6 +68,7 @@ export interface AdminOverview {
   jobs24h: { email: string; user_id: string; total: number; succeeded: number; failed: number; active: number }[];
   events: { at: string; kind: string; pod_id: string | null; detail: Row }[];
   openReports: number;
+  seeAllContent: boolean;
 }
 export interface AdminAccountRow {
   id: string; email: string; plan: string; created_at: string; operator: boolean; flagged_at: string | null; support_access_until: string | null;
@@ -87,7 +88,7 @@ export interface AdminJob {
   createdAt: string; finishedAt: string | null; queueSeconds: number | null; runSeconds: number | null; workerSeconds: number | null;
   gpu: { type: string; region: string | null } | null; charged: number | null; regions: boolean;
   generation: { op: string; steps: number; strength: number | null; control_scale: number | null; sampler: string; seed: number } | null;
-  content: "support_access" | "report" | null;
+  content: "support_access" | "report" | "beta" | null;
   pictures?: { sketch?: string; hint?: string; result?: string };
   prompt?: string | null;
   narrative?: string | null;

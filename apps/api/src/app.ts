@@ -8,6 +8,7 @@ import { assetRoutes } from "./routes/assets.js";
 import { authRoutes } from "./routes/auth.js";
 import { endUserAuthRoutes } from "./routes/enduser-auth.js";
 import { setInputRetentionHours } from "./retention.js";
+import { setOperatorSeesAllContent } from "./console.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { presetRoutes } from "./routes/presets.js";
 import { reportRoutes } from "./routes/reports.js";
@@ -51,6 +52,7 @@ export const logUrl = (url: string) => url.split("?")[0]!.replace(/^\/v1\/storag
 
 export async function buildApp(s: Services, opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
   setInputRetentionHours(s.config.inputRetentionHours ?? null);
+  setOperatorSeesAllContent(s.config.operatorSeesAllContent ?? false);
   const app = Fastify({
     // Request logs carry the method, the path (signed storage tokens cut out) and the status: never
     // bodies (narratives, prompts, pictures), query strings or headers (issue #19).

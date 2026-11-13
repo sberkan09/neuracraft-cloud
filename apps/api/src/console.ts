@@ -14,6 +14,13 @@ import { blobKey, type Storage } from "./storage.js";
 type Q = Db | pg.PoolClient;
 const URL_SECONDS = 900;
 
+// OPERATOR_SEES_ALL_CONTENT (config.operatorSeesAllContent): during a closed beta whose testers
+// agreed, operators see every account's content without support access. Views are still logged.
+let seeAll = false;
+export function setOperatorSeesAllContent(on: boolean) {
+  seeAll = on;
+}
+
 export async function overview(db: Db, config: Config) {
   const now = new Date();
   const [pods, sessions, jobs, events, reports, day, month] = await Promise.all([
@@ -50,6 +57,7 @@ export async function overview(db: Db, config: Config) {
     jobs24h: jobs.rows,
     events: events.rows,
     openReports: reports.rows[0]!.n,
+    seeAllContent: seeAll,
   };
 }
 const round = (x: number) => Math.round(x * 10000) / 10000;
@@ -153,7 +161,7 @@ export async function job(db: Db, storage: Storage, operator: string, id: string
 
 async function jobView(db: Db, storage: Storage, operator: string, j: JobRow, detail: boolean) {
   const draw = drawStep(j);
-  const allowed = j.support ? "support_access" : j.open_report ? "report" : null;
+  const allowed = j.support ? "support_access" : j.open_report ? "report" : seeAll ? "beta" : null;
   const seconds = (a: Date | null, b: Date | null) => (a && b ? Math.round((b.getTime() - a.getTime()) / 100) / 10 : null);
   const view: Record<string, unknown> = {
     id: j.id,

@@ -43,6 +43,9 @@ Operators (`users.operator`, set with `cli/operator.js`) use the console at `#ad
     the web app's API page (`PATCH /v1/me`), or the operator records an agreement made outside it with
     `cli/support-access.js --note`. An operator can end it, never grant it;
   - of a job under an **open report** (the evidence).
+- **Closed beta exception**: `OPERATOR_SEES_ALL_CONTENT=true` shows every account's content without
+  support access, while the closed beta's first tests run (its few testers agreed). It goes before any
+  other account joins and before a public release.
 - **Logged**: every look at an account's content (once per operator, job and hour), every support
   access change and every operator action, in `moderation_log`, shown in the console.
 
