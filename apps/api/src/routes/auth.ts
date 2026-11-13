@@ -35,6 +35,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       ]);
       if (!r.rows[0]) fail(409, "auth.email_taken");
       if (s.config.signupCredits) await entry(c, r.rows[0]!.id, "grant", s.config.signupCredits, undefined, "signup");
+      if (s.config.operatorEmails?.includes(email)) await c.query("UPDATE users SET operator = true WHERE id = $1", [r.rows[0]!.id]);
       return r.rows[0]!;
     });
     setCookie(reply, await createSession(s.db, user.id, s.config.sessionDays));

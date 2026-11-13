@@ -1959,6 +1959,16 @@ describe("operator console", () => {
     assert.equal((await post(`/v1/admin/accounts/${partner.id}/support-access`, { days: 0 })).statusCode, 200);
     assert.equal(json(await get(`/v1/admin/jobs/${jobId}`)).job.content, null);
 
+    // The closed-beta switch: every account's content, still logged.
+    const { setOperatorSeesAllContent } = await import("../src/console.js");
+    setOperatorSeesAllContent(true);
+    try {
+      assert.equal(json(await get(`/v1/admin/jobs/${jobId}`)).job.content, "beta");
+      assert.equal(json(await get("/v1/admin/overview")).seeAllContent, true);
+    } finally {
+      setOperatorSeesAllContent(false);
+    }
+
     // Blocking a signed-in end user for abuse.
     await h.s.db.query("INSERT INTO partner_end_users (user_id, end_user, identity_key) VALUES ($1, 'eu_console', '\\x00')", [partner.id]);
     assert.equal(json(await post(`/v1/admin/accounts/${partner.id}/end-users/eu_console/block`, { note: "spam" })).blocked, true);
@@ -1968,6 +1978,19 @@ describe("operator console", () => {
 
     // The usage report, from the console.
     assert.equal((await get("/v1/admin/usage-report?from=2020-01-01")).statusCode, 200);
+  });
+
+  it("makes OPERATOR_EMAILS operators on sign-up", async () => {
+    const email = `boot${Math.random().toString(36).slice(2, 8)}@example.com`;
+    h.s.config.operatorEmails = [email];
+    try {
+      const u = await signUp(h.app, email);
+      assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: { cookie: u.cookie } })).operator, true);
+      const other = await signUp(h.app);
+      assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: { cookie: other.cookie } })).operator, false);
+    } finally {
+      h.s.config.operatorEmails = [];
+    }
   });
 
   it("works the report queue with the evidence", async () => {

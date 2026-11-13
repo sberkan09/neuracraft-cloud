@@ -33,6 +33,8 @@ services:
       PROMPT_MODEL: ${PROMPT_MODEL:-claude-haiku-5-5}
       # End-user sign-in codes (issue #48): without BREVO_API_KEY, sign-in answers auth.sign_in_unavailable.
       INPUT_RETENTION_HOURS: ${INPUT_RETENTION_HOURS:-}
+      OPERATOR_EMAILS: ${OPERATOR_EMAILS:-}
+      OPERATOR_SEES_ALL_CONTENT: ${OPERATOR_SEES_ALL_CONTENT:-}
       MAIL_PROVIDER: ${MAIL_PROVIDER:-}
       MAIL_FROM: ${MAIL_FROM:-}
       BREVO_API_KEY: ${BREVO_API_KEY:-}

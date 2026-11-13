@@ -443,7 +443,8 @@
       "openReports_one": "{{count}} şikayet inceleme bekliyor",
       "openReports_other": "{{count}} şikayet inceleme bekliyor",
       "events": "Kapasite olayları",
-      "noEvents": "Henüz olay yok."
+      "noEvents": "Henüz olay yok.",
+      "seeAll": "Kapalı beta: tüm hesapların resimlerini ve metinlerini destek erişimi olmadan görüyorsun (OPERATOR_SEES_ALL_CONTENT). Her bakış yine kaydediliyor. İlk testlerden sonra kapat."
     },
     "accounts": {
       "title": "Hesaplar ({{count}})",

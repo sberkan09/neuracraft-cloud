@@ -11,6 +11,8 @@ export interface Config {
   signingKey: Buffer; // signs local-storage URLs
   workerTokens: string[];
   adminTokens: string[]; // operator endpoints (routes/admin.ts)
+  operatorSeesAllContent: boolean; // OPERATOR_SEES_ALL_CONTENT=true: closed beta only (docs/PRIVACY.md)
+  operatorEmails: string[]; // OPERATOR_EMAILS: these accounts become operators (at start and on sign-up); never removes one
   sessionDays: number;
   secureCookies: boolean;
   migrationsDir: string;
@@ -96,6 +98,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     signingKey: env.SIGNING_KEY ? Buffer.from(env.SIGNING_KEY, "hex") : randomBytes(32),
     workerTokens: (env.WORKER_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean),
     adminTokens: (env.ADMIN_TOKENS ?? "").split(",").map((t) => t.trim()).filter((t) => t.length >= 16),
+    operatorSeesAllContent: env.OPERATOR_SEES_ALL_CONTENT === "true",
+    operatorEmails: (env.OPERATOR_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter((e) => e.includes("@")),
     sessionDays: Number(env.SESSION_DAYS ?? 30),
     secureCookies: env.SECURE_COOKIES === "1",
     migrationsDir: path.resolve(env.MIGRATIONS_DIR ?? new URL("../../../../db/migrations", import.meta.url).pathname),

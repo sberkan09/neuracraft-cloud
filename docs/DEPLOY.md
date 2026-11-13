@@ -54,6 +54,7 @@ GitHub → Settings → Secrets and variables → Actions:
 | `RUNPOD_API_KEY` | a Runpod API key |
 | `ANTHROPIC_API_KEY` | optional: narratives → prompts with Claude (a template otherwise) |
 | `ADMIN_TOKEN` | optional, ≥ 16 characters: `GET /v1/admin/usage-report` (docs/USAGE_LOG.md) |
+| `OPERATOR_EMAILS` | optional: comma-separated accounts that become operators of the console at the next deploy (a GitHub secret, so the addresses stay out of this public repository) |
 | `BREVO_API_KEY` | a Brevo API key, for partner apps' sign-in codes (below); without it, sign-in answers `auth.sign_in_unavailable` |
 
 ## First setup
@@ -107,7 +108,8 @@ The web app's **Operator** tab (`https://<SITE_DOMAIN>/#admin`), for operators o
 - **Reports**: the review queue with the evidence (the CLI `review.js` does the same);
 - **Log & usage**: the operator log, and the usage export as CSV.
 
-To become an operator, sign up on the web app, then on the server:
+To become an operator, sign up on the web app and add your address to the `OPERATOR_EMAILS` secret
+(the next deploy applies it), or on the server:
 ```
 docker compose exec api node apps/api/dist/src/cli/operator.js --email <your account> --on
 ```

@@ -99,6 +99,7 @@ function Overview({ openAccount, openReports }: { openAccount: (id: string) => v
   const c = data.capacity;
   return (
     <div className="admin-grid">
+      {data.seeAllContent && <p className="notice wide-card">{t("admin.overview.seeAll")}</p>}
       <section className="card">
         <h2>{t("admin.overview.gpus")}</h2>
         {!c.provider && c.pods.length === 0 && <p className="muted">{t("admin.overview.noProvider")}</p>}

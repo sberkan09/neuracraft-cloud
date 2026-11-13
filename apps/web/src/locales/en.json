@@ -443,7 +443,8 @@
       "openReports_one": "{{count}} report waits for review",
       "openReports_other": "{{count}} reports wait for review",
       "events": "Capacity events",
-      "noEvents": "No events yet."
+      "noEvents": "No events yet.",
+      "seeAll": "Closed beta: you see every account's pictures and texts without support access (OPERATOR_SEES_ALL_CONTENT). Every look is still logged. Turn it off after the first tests."
     },
     "accounts": {
       "title": "Accounts ({{count}})",
