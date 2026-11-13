@@ -1951,6 +1951,8 @@ describe("operator console", () => {
     assert.equal(json(await get(`/v1/admin/jobs?account=${other.id}`)).jobs.length, 0);
     assert.equal(json(await get(`/v1/admin/jobs?account=${partner.id}&regions=true`)).jobs.length, 0);
     assert.equal(json(await get(`/v1/admin/jobs?account=${partner.id}&endUser=tester-1&state=queued`)).jobs.length, 1);
+    assert.equal(json(await get(`/v1/admin/jobs?account=${partner.id}&endUser=test`)).jobs.length, 1);  // the start is enough
+    assert.equal(json(await get(`/v1/admin/jobs?account=${partner.id}&endUser=test_r`)).jobs.length, 0);  // "_" is not a wildcard
     assert.equal((await get("/v1/admin/jobs?account=nope")).statusCode, 400);
 
     // The operator can end support access, not grant it.
