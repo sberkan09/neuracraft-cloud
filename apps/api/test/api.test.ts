@@ -1339,6 +1339,8 @@ describe("sessions and on-demand GPUs", () => {
       const opened = json(await open(as("table-1")));
       await new Promise((r) => setTimeout(r, 50));  // the kick from opening runs a tick
       await m.tick();
+      // The kicked tick may still be renting (state 'requested') when this one returns: wait for it.
+      for (let i = 0; i < 40 && (await h.s.db.query("SELECT 1 FROM gpu_pods WHERE state = 'requested'")).rowCount; i++) await new Promise((r) => setTimeout(r, 50));
       const live = (await h.s.db.query("SELECT id, provider_id, state, price_per_hour FROM gpu_pods WHERE state IN ('requested', 'starting', 'running')")).rows;
       assert.equal(live.length, 1);
       assert.equal(live[0].state, "starting");
@@ -1876,5 +1878,116 @@ describe("end-user sign-in (issue #48)", () => {
     await runRetention(h.s.db, h.s.storage);
     assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM end_user_tokens WHERE end_user = $1", [t.endUser.id])).rows[0].n), 0);
     assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM sign_in_codes WHERE client_id = $1", [client_id])).rows[0].n), 0);
+  });
+});
+
+describe("operator console", () => {
+  it("is for operators only, shows every account's metadata, and content only with support access (logged)", async () => {
+    await presetCatalog();
+    const { createToken } = await import("../src/auth.js");
+    const mail = (n: string) => `${n}${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const [opEmail, partnerEmail] = [mail("op"), mail("partner")];
+    const op = { ...(await signUp(h.app, opEmail)), email: opEmail };
+    const partner = { ...(await signUp(h.app, partnerEmail)), email: partnerEmail };
+    const other = await signUp(h.app);
+    const get = (url: string, cookie = op.cookie) => inject({ method: "GET", url, headers: { cookie } });
+    // Not yet an operator; tokens never reach the console.
+    assert.equal((await get("/v1/admin/overview")).statusCode, 403);
+    await h.s.db.query("UPDATE users SET operator = true WHERE id = $1", [op.id]);
+    assert.equal(json(await get("/v1/me")).operator, true);
+    assert.equal(json(await get("/v1/me", partner.cookie)).operator, false);
+    const pat = (await createToken(h.s.db, op.id, "pat", "script", ["jobs:read"], null)).secret;
+    assert.equal((await inject({ method: "GET", url: "/v1/admin/overview", headers: { authorization: `Bearer ${pat}` } })).statusCode, 403);
+    assert.equal((await get("/v1/admin/overview", other.cookie)).statusCode, 403);
+
+    // A partner end user's map job.
+    await h.s.db.query("INSERT INTO partners (user_id) VALUES ($1)", [partner.id]);
+    await h.s.db.query("INSERT INTO ledger (user_id, kind, amount) VALUES ($1, 'grant', 1000000)", [partner.id]);
+    const appToken = (await createToken(h.s.db, partner.id, "app", "app", ["jobs:submit", "jobs:read", "assets:read"], null)).secret;
+    const submitted = await inject({
+      method: "POST", url: "/v1/presets/sketch_to_scene/jobs", headers: { authorization: `Bearer ${appToken}`, "x-end-user": "tester-1" },
+      payload: { params: { mode: "map", narrative: "Nehrin üzerinde köprü" }, inputs: { sketch: { inline: PNG_1x1.toString("base64"), contentType: "image/png" } } },
+    });
+    assert.equal(submitted.statusCode, 201, submitted.body);
+    const jobId = json(submitted).job.id;
+
+    const ov = json(await get("/v1/admin/overview"));
+    assert.ok(ov.jobs24h.some((r: { email: string; total: number }) => r.email === partner.email && r.total >= 1));
+    assert.equal(typeof ov.capacity.spend.todayUsd, "number");
+    assert.ok(Array.isArray(ov.events));
+    const list = json(await get("/v1/admin/accounts")).accounts;
+    const row = list.find((a: { id: string }) => a.id === partner.id);
+    assert.equal(row.partner, true);
+    assert.ok(row.credits > 1000 && row.credits < 1100, String(row.credits));  // grant + sign-up credits - the reservation
+    const detail = json(await get(`/v1/admin/accounts/${partner.id}`));
+    assert.equal(detail.account.email, partner.email);
+    assert.ok(detail.partner);
+    assert.equal(detail.tokens[0].name, "app");
+    assert.equal(JSON.stringify(detail).includes("secret_hash"), false);
+
+    // Metadata only: no pictures, no texts, nothing logged.
+    const meta = json(await get(`/v1/admin/jobs?account=${partner.id}`)).jobs;
+    assert.equal(meta.length, 1);
+    assert.deepEqual([meta[0].id, meta[0].endUser, meta[0].mode, meta[0].content, meta[0].pictures, meta[0].narrative], [jobId, "tester-1", "map", null, undefined, undefined]);
+    assert.equal(meta[0].regions, false);
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM moderation_log WHERE action = 'view_content'")).rows[0].n), 0);
+
+    // The account grants support access itself: pictures and texts, each view logged.
+    const grant = await inject({ method: "PATCH", url: "/v1/me", headers: { cookie: partner.cookie }, payload: { supportAccessDays: 30 } });
+    assert.equal(grant.statusCode, 200, grant.body);
+    assert.ok(json(grant).supportAccessUntil);
+    assert.equal((await inject({ method: "PATCH", url: "/v1/me", headers: { cookie: partner.cookie }, payload: { supportAccessDays: 91 } })).statusCode, 400);
+    const full = json(await get(`/v1/admin/jobs/${jobId}`)).job;
+    assert.equal(full.content, "support_access");
+    assert.match(full.pictures.sketch, /\/v1\/storage\//);
+    assert.equal(full.narrative, "Nehrin üzerinde köprü");
+    assert.ok(full.prompt);
+    const log = json(await get("/v1/admin/audit")).entries;
+    assert.ok(log.some((e: { action: string; job_id: string; operator: string }) => e.action === "view_content" && e.job_id === jobId && e.operator === op.email));
+    await get(`/v1/admin/jobs?account=${partner.id}`);  // looked at again: still one entry this hour
+    assert.equal(Number((await h.s.db.query("SELECT count(*) AS n FROM moderation_log WHERE action = 'view_content' AND job_id = $1", [jobId])).rows[0].n), 1);
+    assert.ok(log.some((e: { action: string; email: string }) => e.action === "support_access" && e.email === partner.email));
+    // Filters.
+    assert.equal(json(await get(`/v1/admin/jobs?account=${other.id}`)).jobs.length, 0);
+    assert.equal(json(await get(`/v1/admin/jobs?account=${partner.id}&regions=true`)).jobs.length, 0);
+    assert.equal(json(await get(`/v1/admin/jobs?account=${partner.id}&endUser=tester-1&state=queued`)).jobs.length, 1);
+    assert.equal((await get("/v1/admin/jobs?account=nope")).statusCode, 400);
+
+    // The operator can end support access, not grant it.
+    const post = (url: string, payload: object) => inject({ method: "POST", url, headers: { cookie: op.cookie }, payload });
+    assert.equal((await post(`/v1/admin/accounts/${partner.id}/support-access`, { days: 30 })).statusCode, 400);
+    assert.equal((await post(`/v1/admin/accounts/${partner.id}/support-access`, { days: 0 })).statusCode, 200);
+    assert.equal(json(await get(`/v1/admin/jobs/${jobId}`)).job.content, null);
+
+    // Blocking a signed-in end user for abuse.
+    await h.s.db.query("INSERT INTO partner_end_users (user_id, end_user, identity_key) VALUES ($1, 'eu_console', '\\x00')", [partner.id]);
+    assert.equal(json(await post(`/v1/admin/accounts/${partner.id}/end-users/eu_console/block`, { note: "spam" })).blocked, true);
+    assert.ok((await h.s.db.query("SELECT blocked_at FROM partner_end_users WHERE end_user = 'eu_console'")).rows[0].blocked_at);
+    assert.equal((await post(`/v1/admin/accounts/${partner.id}/end-users/eu_nobody/block`, {})).statusCode, 404);
+    assert.equal(json(await post(`/v1/admin/accounts/${partner.id}/end-users/eu_console/unblock`, {})).blocked, false);
+
+    // The usage report, from the console.
+    assert.equal((await get("/v1/admin/usage-report?from=2020-01-01")).statusCode, 200);
+  });
+
+  it("works the report queue with the evidence", async () => {
+    const opEmail = `op${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const op = { ...(await signUp(h.app, opEmail)), email: opEmail };
+    await h.s.db.query("UPDATE users SET operator = true WHERE id = $1", [op.id]);
+    const owner = await signUp(h.app);
+    const { createHash } = await import("node:crypto");
+    const sha = createHash("sha256").update(PNG_1x1).digest("hex");
+    await h.s.storage.put(`blobs/${sha}`, PNG_1x1);
+    await h.s.db.query("INSERT INTO blobs (sha256, bytes) VALUES ($1, $2) ON CONFLICT DO NOTHING", [sha, PNG_1x1.length]);
+    const asset = (await h.s.db.query<{ id: string }>("INSERT INTO assets (owner_id, kind, name, content_type, sha256, bytes) VALUES ($1, 'output', 'scene.png', 'image/png', $2, $3) RETURNING id", [owner.id, sha, PNG_1x1.length])).rows[0]!.id;
+    assert.equal((await inject({ method: "POST", url: `/v1/assets/${asset}/report`, headers: { cookie: owner.cookie }, payload: { reason: "other", note: "test" } })).statusCode, 202);
+    const reports = json(await inject({ method: "GET", url: "/v1/admin/reports", headers: { cookie: op.cookie } })).reports;
+    const r = reports.find((x: { account: { id: string } | null }) => x.account?.id === owner.id);
+    assert.equal(r.reason, "other");
+    assert.match(r.output, /\/v1\/storage\//);
+    assert.equal((await inject({ method: "POST", url: `/v1/admin/reports/${r.id}/dismiss`, headers: { cookie: op.cookie }, payload: { note: "fine" } })).statusCode, 200);
+    const after = json(await inject({ method: "GET", url: "/v1/admin/reports?status=all", headers: { cookie: op.cookie } })).reports.find((x: { id: string }) => x.id === r.id);
+    assert.deepEqual([after.status, after.resolvedBy, after.output], ["dismissed", op.email, null]);
+    assert.equal((await inject({ method: "POST", url: "/v1/admin/reports/00000000-0000-0000-0000-000000000000/remove", headers: { cookie: op.cookie }, payload: {} })).statusCode, 404);
   });
 });

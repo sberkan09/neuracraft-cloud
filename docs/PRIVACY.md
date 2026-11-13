@@ -31,6 +31,21 @@ hints, narratives and prompts for 7 days instead of 24 hours, and the operator e
 with `cli/job-export.js`. Before a public release the setting goes back to 24 hours and exports stop;
 the store declarations follow the 24-hour figures.
 
+### What operators see (the operator console)
+
+NeuraCraft Cloud serves many accounts; a partner app's end users belong to that partner's account.
+Operators (`users.operator`, set with `cli/operator.js`) use the console at `#admin` in the web app:
+- **Always**: every account's metadata: jobs (state, mode, timings, GPU, cost, error, end-user id),
+  GPU pods and spend, sessions, credits, partner settings, token names and last use. Never token
+  secrets, password hashes or sign-in addresses.
+- **Pictures and texts** (sketches, colour hints, results, narratives, prompts) only:
+  - of an account that granted **support access**, for 1 to 90 days. The account grants and ends it on
+    the web app's API page (`PATCH /v1/me`), or the operator records an agreement made outside it with
+    `cli/support-access.js --note`. An operator can end it, never grant it;
+  - of a job under an **open report** (the evidence).
+- **Logged**: every look at an account's content (once per operator, job and hour), every support
+  access change and every operator action, in `moderation_log`, shown in the console.
+
 ### How deletion works
 
 - **Automatically**: a cleanup runs every 10 minutes. It deletes expired assets (database rows and

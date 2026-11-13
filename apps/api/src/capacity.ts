@@ -361,13 +361,8 @@ export class CapacityManager {
   async spentThisMonth(now = new Date()): Promise<number> {
     return this.spentSince("month", now);
   }
-  private async spentSince(unit: "day" | "month", now: Date): Promise<number> {
-    const r = await this.db.query<{ usd: string | null }>(
-      `SELECT sum(price_per_hour * extract(epoch FROM coalesce(stopped_at, $1) - greatest(requested_at, date_trunc($2, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')) / 3600) AS usd
-         FROM gpu_pods WHERE price_per_hour IS NOT NULL AND coalesce(stopped_at, $1) > date_trunc($2, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
-      [now, unit],
-    );
-    return Number(r.rows[0]?.usd ?? 0);
+  private spentSince(unit: "day" | "month", now: Date): Promise<number> {
+    return podsSpentSince(this.db, unit, now);
   }
 
   // Why no GPU may be rented or kept now, if a budget is used up.
@@ -380,6 +375,16 @@ export class CapacityManager {
     }
     return null;
   }
+}
+
+// What GPU pods cost since midnight / the first of the month (UTC), running ones up to now.
+export async function podsSpentSince(db: Db, unit: "day" | "month", now = new Date()): Promise<number> {
+  const r = await db.query<{ usd: string | null }>(
+    `SELECT sum(price_per_hour * extract(epoch FROM coalesce(stopped_at, $1) - greatest(requested_at, date_trunc($2, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')) / 3600) AS usd
+       FROM gpu_pods WHERE price_per_hour IS NOT NULL AND coalesce(stopped_at, $1) > date_trunc($2, $1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+    [now, unit],
+  );
+  return Number(r.rows[0]?.usd ?? 0);
 }
 
 export async function capacityEvent(db: Db, kind: string, podId: string | null, detail: Record<string, unknown>): Promise<void> {

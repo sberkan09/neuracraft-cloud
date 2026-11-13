@@ -19,6 +19,9 @@ export function Tokens() {
   const refresh = useCallback(() => api.tokens().then((r) => setTokens(r.tokens)).catch((e) => setError(errorText(e))), [errorText]);
   useEffect(() => void refresh(), [refresh]);
   const date = (s: string | null) => (s ? new Date(s).toLocaleString(i18n.language) : t("tokens.never"));
+  const [support, setSupport] = useState<string | null>(null);
+  useEffect(() => void api.me().then((r) => setSupport(r.supportAccessUntil ?? null)).catch(() => {}), []);
+  const setSupportDays = (days: number) => void api.setSupportAccess(days).then((r) => setSupport(r.supportAccessUntil)).catch((e) => setError(errorText(e)));
 
   const create = async () => {
     setError("");
@@ -85,6 +88,22 @@ export function Tokens() {
             </li>
           ))}
         </ul>
+      </section>
+      <section className="card">
+        <h2>{t("support.title")}</h2>
+        <p className="muted">{t("support.intro")}</p>
+        {support ? (
+          <div className="row wrap">
+            <span>{t("support.on", { until: date(support) })}</span>
+            <button className="ghost small" onClick={() => setSupportDays(0)}>{t("support.end")}</button>
+          </div>
+        ) : (
+          <div className="row wrap">
+            <span className="muted">{t("support.off")}</span>
+            <button className="ghost small" onClick={() => setSupportDays(7)}>{t("support.grant", { count: 7 })}</button>
+            <button className="ghost small" onClick={() => setSupportDays(30)}>{t("support.grant", { count: 30 })}</button>
+          </div>
+        )}
       </section>
     </div>
   );

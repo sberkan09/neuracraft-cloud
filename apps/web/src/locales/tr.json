@@ -115,7 +115,8 @@
     "label": "Sayfalar",
     "tasks": "Görevler",
     "studio": "Studio",
-    "tokens": "API"
+    "tokens": "API",
+    "admin": "Operatör"
   },
   "studio": {
     "openInStudio": "Studio'da aç",
@@ -361,5 +362,156 @@
     "expiresAt": "{{at}} sona erer",
     "revoked": "iptal edildi",
     "revoke": "İptal et"
+  },
+  "admin": {
+    "title": "Operatör paneli",
+    "loading": "Yükleniyor…",
+    "back": "Geri",
+    "account": {
+      "jobs": "İşleri",
+      "summary": "{{created}} tarihinden beri · {{credits}} kredi · plan {{plan}}",
+      "supportOn": "{{until}} tarihine kadar destek erişimi var: bu hesabın resimlerini ve metinlerini görebilirsin; her bakış kaydediliyor.",
+      "supportOff": "Destek erişimi yok: bu hesabın işlerini resim ve metin olmadan görürsün. Hesap, ayarlarından (API sayfası) erişim verebilir.",
+      "endSupport": "Sonlandır",
+      "partner": "Partner ayarları",
+      "clients": "Giriş istemcileri",
+      "disabled": "kapalı",
+      "daily": "Günlük işler (14 gün)",
+      "endUsers": "Giriş yapmış son kullanıcılar ({{count}})",
+      "signedUp": "Kayıt",
+      "lastSeen": "Son görülme",
+      "jobs24h": "24 sa",
+      "jobsTotal": "Toplam",
+      "block": "Engelle",
+      "unblock": "Engeli kaldır",
+      "tokens": "Anahtarlar",
+      "lastUsed": "son kullanım {{at}}",
+      "ledger": "Krediler",
+      "noTokens": "Anahtar yok."
+    },
+    "endUser": "Son kullanıcı",
+    "hour": "sa",
+    "credits": "kredi",
+    "tabs": {
+      "overview": "Genel durum",
+      "accounts": "Hesaplar",
+      "jobs": "İşler",
+      "reports": "Şikayetler",
+      "audit": "Kayıt ve kullanım"
+    },
+    "podState": {
+      "requested": "kiralanıyor",
+      "starting": "başlıyor",
+      "running": "hazır",
+      "draining": "kapanıyor"
+    },
+    "jobState": {
+      "queued": "sırada",
+      "leased": "atandı",
+      "running": "çalışıyor",
+      "succeeded": "bitti",
+      "failed": "başarısız",
+      "cancelled": "iptal"
+    },
+    "badges": {
+      "partner": "partner",
+      "operator": "operatör",
+      "support": "destek erişimi",
+      "flagged": "işaretli"
+    },
+    "overview": {
+      "gpus": "GPU'lar",
+      "noProvider": "GPU sağlayıcısı ayarlı değil (CAPACITY_PROVIDER).",
+      "noPods": "Şu an kiralı GPU yok (en fazla {{max}}). Bir uygulama oturum açınca kiralanır.",
+      "renting": "kiralanıyor…",
+      "since": "{{at}} itibarıyla",
+      "spend": "GPU harcaması",
+      "today": "Bugün (UTC)",
+      "month": "Bu ay",
+      "spendNote": "Kiralanan GPU'ların maliyeti, çalışanlar şu ana kadar. Sınıra gelinince yeni GPU kiralanmaz.",
+      "sessions": "Açık oturumlar",
+      "noSessions": "Açık oturum yok.",
+      "openCount_one": "{{count}} açık",
+      "openCount_other": "{{count}} açık",
+      "lastSeen": "son sinyal {{at}}",
+      "jobs24h": "Son 24 saatteki işler",
+      "noJobs": "İş yok.",
+      "total": "Toplam",
+      "ok": "Biten",
+      "failed": "Başarısız",
+      "active": "Süren",
+      "openReports_one": "{{count}} şikayet inceleme bekliyor",
+      "openReports_other": "{{count}} şikayet inceleme bekliyor",
+      "events": "Kapasite olayları",
+      "noEvents": "Henüz olay yok."
+    },
+    "accounts": {
+      "title": "Hesaplar ({{count}})",
+      "search": "E-postayla ara",
+      "credits": "Kredi",
+      "endUsers": "Giriş yapmış son kullanıcı",
+      "jobs7d": "İş (7 gün)",
+      "lastJob": "Son iş"
+    },
+    "jobs": {
+      "all": "Hepsi",
+      "state": "Durum",
+      "regions": "Bölge katmanı",
+      "withRegions": "Bölgeli",
+      "withoutRegions": "Bölgesiz",
+      "none": "Uyan iş yok.",
+      "more": "Daha eski işler",
+      "regionsBadge": "bölgeli",
+      "hidden": "Resimler ve metinler gizli: bu hesap destek erişimi vermedi.",
+      "pic": {
+        "sketch": "Çizim",
+        "hint": "Bölge ipucu",
+        "result": "Sonuç"
+      },
+      "timing": "sıra {{queue}} sn · çalışma {{run}} sn"
+    },
+    "reports": {
+      "title": "Şikayetler",
+      "showAll": "Çözülenler de",
+      "none": "Şikayet yok.",
+      "note": "Not (isteğe bağlı)",
+      "dismiss": "Sorun yok",
+      "remove": "Resmi kaldır",
+      "flag": "Hesabı işaretle",
+      "resolved": "{{status}}: {{by}}, {{at}}",
+      "reason": {
+        "sexual": "Cinsel içerik",
+        "violence_gore": "Şiddet veya vahşet",
+        "hate": "Nefret",
+        "minor_safety": "Çocuk güvenliği",
+        "other": "Diğer",
+        "classifier": "Sınıflandırıcı tuttu"
+      }
+    },
+    "audit": {
+      "usage": "Kullanım dışa aktarımı",
+      "usageIntro": "Kullanım kaydı CSV dosyaları olarak (işler, GPU'lar, oturumlar, olaylar), maliyet karşılaştırması için. Kişisel veri yok.",
+      "download": "İndir",
+      "title": "Operatör kaydı",
+      "intro": "Her operatör işlemi ve bir hesabın içeriğine her bakış."
+    },
+    "accountLabel": "Hesap",
+    "partnerKeys": {
+      "end_user_daily_jobs": "Son kullanıcı başına günlük harita",
+      "partner_daily_jobs": "Tüm kullanıcılar için günlük harita",
+      "quota_timezone": "Günün başladığı saat dilimi",
+      "allowance_required": "Hak tanımı gerekli",
+      "require_end_user_tokens": "Sadece giriş yapmış kullanıcılar",
+      "max_sessions": "En fazla açık oturum"
+    }
+  },
+  "support": {
+    "title": "Destek erişimi",
+    "intro": "Bir sorunda yardım için ya da beta sırasında, NeuraCraft operatörlerinin işlerinin resimlerini ve metinlerini bir süre görmesine izin ver. Her bakış kaydedilir; süre bitince kendiliğinden kapanır.",
+    "on": "{{until}} tarihine kadar açık.",
+    "off": "Kapalı.",
+    "end": "Şimdi kapat",
+    "grant_one": "{{count}} gün izin ver",
+    "grant_other": "{{count}} gün izin ver"
   }
 }

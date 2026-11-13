@@ -231,6 +231,14 @@ A job can also end `failed` with `job.error.code`:
 - **Deleting**: "Delete my account" in the app calls `DELETE /v1/me`. It deletes the end user and
   everything stored for them at once; no GM Cebi server is needed.
 
+## Support access
+
+NeuraCraft's operators see GM Cebi's jobs as metadata only (state, mode, timings, GPU, the end-user
+id). To let them see the sketches, results and narratives too, for a problem or a beta, sign in to the
+web app with GM Cebi's account and turn on **Support access** on the API page (7 or 30 days; it ends
+by itself, and can be ended at once). Every look is logged (docs/PRIVACY.md). During the closed beta
+the operator has recorded it with the account owner's agreement.
+
 ## Design notes
 
 - The feature is optional. The app works offline and the battle map works without it (a plain grid

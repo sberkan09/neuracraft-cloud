@@ -95,6 +95,28 @@ GitHub → Settings → Secrets and variables → Actions:
      A failure prints Brevo's answer (an unverified sender, an IP not in Brevo's authorized IPs, a
      wrong key).
 
+## The operator console
+
+The web app's **Operator** tab (`https://<SITE_DOMAIN>/#admin`), for operators only:
+- **Overview**: GPUs now, spend against the daily and monthly limits, open sessions, jobs in the last
+  24 hours per account, capacity events;
+- **Accounts**: each account's credits, partner settings, sign-in clients, tokens, signed-in end users
+  (block or unblock one), jobs per day;
+- **Jobs**: every account's jobs, filtered by account, end user, state and region layer. Pictures and
+  texts appear only for accounts with support access (docs/PRIVACY.md);
+- **Reports**: the review queue with the evidence (the CLI `review.js` does the same);
+- **Log & usage**: the operator log, and the usage export as CSV.
+
+To become an operator, sign up on the web app, then on the server:
+```
+docker compose exec api node apps/api/dist/src/cli/operator.js --email <your account> --on
+```
+An account lets operators see its content from its own API page ("Support access"), or, when it
+agreed elsewhere (a partner's closed beta):
+```
+docker compose exec api node apps/api/dist/src/cli/support-access.js --email <account> --days 30 --note "closed beta, testers agreed"
+```
+
 ## Day to day
 
 - **Deploying again without a new commit:** GitHub → Actions → CI → Run workflow (branch main).

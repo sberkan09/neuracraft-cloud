@@ -115,7 +115,8 @@
     "label": "Pages",
     "tasks": "Tasks",
     "studio": "Studio",
-    "tokens": "API"
+    "tokens": "API",
+    "admin": "Operator"
   },
   "studio": {
     "openInStudio": "Open in Studio",
@@ -361,5 +362,156 @@
     "expiresAt": "expires {{at}}",
     "revoked": "revoked",
     "revoke": "Revoke"
+  },
+  "admin": {
+    "title": "Operator console",
+    "loading": "Loading…",
+    "back": "Back",
+    "account": {
+      "jobs": "Its jobs",
+      "summary": "Since {{created}} · {{credits}} credits · plan {{plan}}",
+      "supportOn": "Support access until {{until}}: you can see this account's pictures and texts; every view is logged.",
+      "supportOff": "No support access: you see this account's jobs without pictures or texts. The account can grant it in its settings (API page).",
+      "endSupport": "End it",
+      "partner": "Partner settings",
+      "clients": "Sign-in clients",
+      "disabled": "disabled",
+      "daily": "Jobs per day (14 days)",
+      "endUsers": "Signed-in end users ({{count}})",
+      "signedUp": "Signed up",
+      "lastSeen": "Last seen",
+      "jobs24h": "24 h",
+      "jobsTotal": "Total",
+      "block": "Block",
+      "unblock": "Unblock",
+      "tokens": "Tokens",
+      "lastUsed": "last used {{at}}",
+      "ledger": "Credits",
+      "noTokens": "No tokens."
+    },
+    "endUser": "End user",
+    "hour": "h",
+    "credits": "credits",
+    "tabs": {
+      "overview": "Overview",
+      "accounts": "Accounts",
+      "jobs": "Jobs",
+      "reports": "Reports",
+      "audit": "Log & usage"
+    },
+    "podState": {
+      "requested": "renting",
+      "starting": "starting",
+      "running": "ready",
+      "draining": "draining"
+    },
+    "jobState": {
+      "queued": "queued",
+      "leased": "assigned",
+      "running": "running",
+      "succeeded": "done",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    },
+    "badges": {
+      "partner": "partner",
+      "operator": "operator",
+      "support": "support access",
+      "flagged": "flagged"
+    },
+    "overview": {
+      "gpus": "GPUs",
+      "noProvider": "No GPU provider is set up (CAPACITY_PROVIDER).",
+      "noPods": "No GPU rented now (at most {{max}}). One is rented when an app opens a session.",
+      "renting": "renting…",
+      "since": "since {{at}}",
+      "spend": "GPU spend",
+      "today": "Today (UTC)",
+      "month": "This month",
+      "spendNote": "What rented GPUs cost, running ones up to now. At a limit no new GPU is rented.",
+      "sessions": "Open sessions",
+      "noSessions": "No open sessions.",
+      "openCount_one": "{{count}} open",
+      "openCount_other": "{{count}} open",
+      "lastSeen": "last heartbeat {{at}}",
+      "jobs24h": "Jobs in the last 24 hours",
+      "noJobs": "No jobs.",
+      "total": "Total",
+      "ok": "Done",
+      "failed": "Failed",
+      "active": "Active",
+      "openReports_one": "{{count}} report waits for review",
+      "openReports_other": "{{count}} reports wait for review",
+      "events": "Capacity events",
+      "noEvents": "No events yet."
+    },
+    "accounts": {
+      "title": "Accounts ({{count}})",
+      "search": "Search by email",
+      "credits": "Credits",
+      "endUsers": "Signed-in end users",
+      "jobs7d": "Jobs (7 days)",
+      "lastJob": "Last job"
+    },
+    "jobs": {
+      "all": "All",
+      "state": "State",
+      "regions": "Region layer",
+      "withRegions": "With regions",
+      "withoutRegions": "Without",
+      "none": "No jobs match.",
+      "more": "Older jobs",
+      "regionsBadge": "regions",
+      "hidden": "Pictures and texts hidden: this account has not granted support access.",
+      "pic": {
+        "sketch": "Sketch",
+        "hint": "Region hint",
+        "result": "Result"
+      },
+      "timing": "queue {{queue}} s · run {{run}} s"
+    },
+    "reports": {
+      "title": "Reports",
+      "showAll": "Resolved too",
+      "none": "No reports.",
+      "note": "Note (optional)",
+      "dismiss": "Nothing wrong",
+      "remove": "Remove the picture",
+      "flag": "Flag the account",
+      "resolved": "{{status}} by {{by}}, {{at}}",
+      "reason": {
+        "sexual": "Sexual content",
+        "violence_gore": "Violence or gore",
+        "hate": "Hate",
+        "minor_safety": "Minor safety",
+        "other": "Other",
+        "classifier": "Held by the classifier"
+      }
+    },
+    "audit": {
+      "usage": "Usage export",
+      "usageIntro": "The usage log as CSV files (jobs, GPUs, sessions, events), for the cost comparison. No personal data.",
+      "download": "Download",
+      "title": "Operator log",
+      "intro": "Every operator action and every look at an account's content."
+    },
+    "accountLabel": "Account",
+    "partnerKeys": {
+      "end_user_daily_jobs": "Maps per end user a day",
+      "partner_daily_jobs": "Maps a day, all end users",
+      "quota_timezone": "Day starts in",
+      "allowance_required": "Allowances required",
+      "require_end_user_tokens": "Signed-in end users only",
+      "max_sessions": "Open sessions at most"
+    }
+  },
+  "support": {
+    "title": "Support access",
+    "intro": "Let NeuraCraft's operators see your jobs' pictures and texts for a while, to help with a problem or during a beta. Every look is logged; it ends by itself.",
+    "on": "On until {{until}}.",
+    "off": "Off.",
+    "end": "End now",
+    "grant_one": "Allow for {{count}} day",
+    "grant_other": "Allow for {{count}} days"
   }
 }
