@@ -12,6 +12,8 @@ const config = loadConfig();
 if (config.storage.kind !== "local") throw new Error("STORAGE=s3 arrives with the deployment milestone");
 const db = connect(config.databaseUrl);
 const applied = await migrate(db, config.migrationsDir);
+// The operator console's operators from OPERATOR_EMAILS (a deployment without a shell; cli/operator.js otherwise).
+if (config.operatorEmails.length) await db.query("UPDATE users SET operator = true WHERE email = ANY($1) AND NOT operator", [config.operatorEmails]);
 const events = new JobEvents(config.databaseUrl);
 await events.start();
 const storage = new LocalStorage(config.storage.dir, config.signingKey, config.publicUrl);

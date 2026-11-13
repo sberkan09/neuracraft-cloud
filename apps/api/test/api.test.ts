@@ -1970,6 +1970,19 @@ describe("operator console", () => {
     assert.equal((await get("/v1/admin/usage-report?from=2020-01-01")).statusCode, 200);
   });
 
+  it("makes OPERATOR_EMAILS operators on sign-up", async () => {
+    const email = `boot${Math.random().toString(36).slice(2, 8)}@example.com`;
+    h.s.config.operatorEmails = [email];
+    try {
+      const u = await signUp(h.app, email);
+      assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: { cookie: u.cookie } })).operator, true);
+      const other = await signUp(h.app);
+      assert.equal(json(await inject({ method: "GET", url: "/v1/me", headers: { cookie: other.cookie } })).operator, false);
+    } finally {
+      h.s.config.operatorEmails = [];
+    }
+  });
+
   it("works the report queue with the evidence", async () => {
     const opEmail = `op${Math.random().toString(36).slice(2, 8)}@example.com`;
     const op = { ...(await signUp(h.app, opEmail)), email: opEmail };
