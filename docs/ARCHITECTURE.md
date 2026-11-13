@@ -342,3 +342,13 @@ docs            this file, the roadmap, runbooks
 4. **Product**: payments (MoR), content safety, terms / takedown flows, production deployment
    (Hetzner + R2 + managed Postgres), monitoring, CPU autoscaling.
 5. **GPU**: CUDA backend in the engine; Runpod GPU workers and their autoscaling.
+
+## The operator console
+
+`#admin` in the web app, `apps/api/src/console.ts` and `routes/admin.ts`. The console serves the whole
+service, not one partner:
+- **Metadata**: every account's jobs, GPUs, spend, sessions and settings;
+- **Content**: only with the account's support access (`users.support_access_until`, granted by the
+  account) or under an open report, with each look logged in `moderation_log`;
+- **Access**: operators are accounts with `users.operator`, and only a cookie session counts, so no
+  API token reaches the console.

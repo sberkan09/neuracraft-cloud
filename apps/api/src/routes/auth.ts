@@ -74,7 +74,16 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         quota: p && day ? { daily: p.endUserDailyJobs, used: day.used, resetsAt: day.resetsAt.toISOString() } : null,
       };
     }
-    return { user: u, credits: await balance(s.db, u.id) };
+    const extra = u.tokenKind ? null : (await s.db.query<{ operator: boolean; until: Date | null }>(
+      "SELECT operator, CASE WHEN support_access_until > now() THEN support_access_until END AS until FROM users WHERE id = $1",
+      [u.id],
+    )).rows[0];
+    return {
+      user: u,
+      credits: await balance(s.db, u.id),
+      // The web app only (a cookie session): the operator console, and the account's support access.
+      ...(extra ? { operator: extra.operator, supportAccessUntil: extra.until?.toISOString() ?? null } : {}),
+    };
   });
 
   // Deletes the account and everything it owns (issue #19): rows at once, the bytes with the next
@@ -98,9 +107,22 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     return { ok: true };
   });
 
-  app.patch<{ Body: { locale?: string } }>("/v1/me", async (req) => {
+  app.patch<{ Body: { locale?: string; supportAccessDays?: unknown } }>("/v1/me", async (req) => {
     const u = await requireUser(s.db, req, "session");
-    const locale = req.body?.locale;
+    const b = req.body ?? {};
+    // Support access (the operator console): the account lets NeuraCraft's operators see its jobs'
+    // pictures and texts for N days (1-90), to help with problems or a beta; 0 ends it at once.
+    if (b.supportAccessDays !== undefined) {
+      const days = b.supportAccessDays;
+      if (typeof days !== "number" || !Number.isInteger(days) || days < 0 || days > 90) fail(400, "request.invalid", { field: "supportAccessDays" });
+      const r = await s.db.query<{ until: Date | null }>(
+        "UPDATE users SET support_access_until = CASE WHEN $2 > 0 THEN now() + make_interval(days => $2) END, support_access_note = CASE WHEN $2 > 0 THEN 'granted by the account' END WHERE id = $1 RETURNING support_access_until AS until",
+        [u.id, days],
+      );
+      await s.db.query("INSERT INTO moderation_log (operator, action, user_id, note) VALUES ($1, 'support_access', $2, $3)", [u.email, u.id, days ? `granted ${days} days by the account` : "ended by the account"]);
+      if (b.locale === undefined) return { user: u, supportAccessUntil: r.rows[0]!.until?.toISOString() ?? null };
+    }
+    const locale = b.locale;
     if (!LOCALES.includes(locale as never)) fail(400, "request.invalid");
     await s.db.query("UPDATE users SET locale = $2 WHERE id = $1", [u.id, locale]);
     return { user: { ...u, locale } };
