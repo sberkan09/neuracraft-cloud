@@ -98,7 +98,12 @@ GitHub → Settings → Secrets and variables → Actions:
 ## Day to day
 
 - **Deploying again without a new commit:** GitHub → Actions → CI → Run workflow (branch main).
-- **Logs:** `docker compose logs -f api`.
+- **Logs:** `docker compose logs -f api`, or in a browser with Dozzle (read-only, every container):
+  ```
+  ssh -N -L 8081:127.0.0.1:8081 -i ~/.ssh/neuracraft_deploy deploy@<ip>
+  ```
+  then open `http://localhost:8081`. It listens on the server's loopback only, so the tunnel is the
+  way in.
 - **Capacity:** `docker compose exec db psql -U nc neuracraft -c "SELECT at, kind, detail FROM capacity_events ORDER BY at DESC LIMIT 20"`.
 - **Usage export:** docs/USAGE_LOG.md.
 - **Testers' results** (closed beta only, docs/PRIVACY.md): the last 10 maps with their sketch,
