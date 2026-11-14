@@ -53,19 +53,21 @@ export function App() {
   return (
     <div className={`app ${user && (page === "studio" || page === "admin") ? "wide" : ""}`}>
       <header className="top">
-        <div className="brand">
-          <span className="logo" aria-hidden>◆</span> {t("app.name")}
+        <div className="top-left">
+          <div className="brand">
+            NeuraCraft<span> / Cloud</span>
+          </div>
+          {user && (
+            <nav className="tabs" aria-label={t("nav.label")}>
+              <button type="button" aria-pressed={page === "home"} onClick={() => go("home")}>{t("nav.tasks")}</button>
+              <button type="button" aria-pressed={page === "studio"} onClick={() => go("studio")}>{t("nav.studio")}</button>
+              <button type="button" aria-pressed={page === "tokens"} onClick={() => go("tokens")}>{t("nav.tokens")}</button>
+              {operator && (
+                <button type="button" aria-pressed={page === "admin"} onClick={() => go("admin")}>{t("nav.admin")}</button>
+              )}
+            </nav>
+          )}
         </div>
-        {user && (
-          <nav className="segmented" aria-label={t("nav.label")}>
-            <button type="button" aria-pressed={page === "home"} onClick={() => go("home")}>{t("nav.tasks")}</button>
-            <button type="button" aria-pressed={page === "studio"} onClick={() => go("studio")}>{t("nav.studio")}</button>
-            <button type="button" aria-pressed={page === "tokens"} onClick={() => go("tokens")}>{t("nav.tokens")}</button>
-            {operator && (
-              <button type="button" aria-pressed={page === "admin"} onClick={() => go("admin")}>{t("nav.admin")}</button>
-            )}
-          </nav>
-        )}
         <div className="top-actions">
           <label className="lang">
             <span className="sr-only">{t("language.label")}</span>
@@ -78,7 +80,7 @@ export function App() {
             </select>
           </label>
           {user && (
-            <button className="ghost" onClick={() => api.logout().then(() => (setUser(null), setOperator(false)))}>
+            <button className="link" onClick={() => api.logout().then(() => (setUser(null), setOperator(false)))}>
               {t("auth.logout")}
             </button>
           )}

@@ -229,7 +229,7 @@ export function Studio(props: { workflow: Workflow; onWorkflow(wf: Workflow): vo
 
       <section className="canvas card" aria-label={t("studio.workflow")}>
         <div className="toolbar">
-          <div className="segmented" role="group" aria-label={t("studio.view")}>
+          <div className="tabs" role="group" aria-label={t("studio.view")}>
             {(["graph", "list", "json"] as const).map((v) => (
               <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}>
                 {t(`studio.views.${v}`)}

@@ -17,7 +17,10 @@
     "passwordHint": "En az 10 karakter",
     "haveAccount": "Zaten hesabın var mı?",
     "noAccount": "Yeni misin?",
-    "working": "Bir saniye…"
+    "working": "Bir saniye…",
+    "headline": "Çizimden sonuca,\ntek bir hatta.",
+    "figure": "FIG. 1 — Çizim, baskı olarak",
+    "figureNote": "512 × 512 · bölgeli harita"
   },
   "home": {
     "credits": "Kredi",
@@ -54,7 +57,8 @@
       "cancelled": "İptal edildi"
     },
     "step": "Adım {{step}} / {{steps}}: {{op}}",
-    "seconds": "{{value}} sn worker süresi"
+    "seconds": "{{value}} sn worker süresi",
+    "pipeline": "İş akışı"
   },
   "errors": {
     "auth.required": "Lütfen giriş yap.",
