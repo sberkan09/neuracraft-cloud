@@ -36,7 +36,11 @@ export function Tokens() {
   };
 
   return (
-    <div className="home">
+    <div className="tokens-page">
+      <div className="page-head">
+        <h1>{t("nav.tokens")}</h1>
+      </div>
+      <div className="admin-grid">
       <section className="card">
         <h2>{t("tokens.title")}</h2>
         <p className="muted">{t("tokens.intro")}</p>
@@ -105,6 +109,7 @@ export function Tokens() {
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }

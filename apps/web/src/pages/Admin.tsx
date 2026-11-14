@@ -24,7 +24,10 @@ export function Admin() {
   };
   return (
     <div className="admin">
-      <nav className="segmented admin-tabs" aria-label={t("admin.title")}>
+      <div className="page-head">
+        <h1>{t("admin.title")}</h1>
+      </div>
+      <nav className="tabs sub admin-tabs" aria-label={t("admin.title")}>
         {TABS.map((x) => (
           <button key={x} type="button" aria-pressed={tab === x} onClick={() => (setTab(x), x === "accounts" && setAccount(null))}>
             {t(`admin.tabs.${x}`)}
@@ -97,9 +100,29 @@ function Overview({ openAccount, openReports }: { openAccount: (id: string) => v
   if (error) return <p className="error">{error}</p>;
   if (!data) return <p className="muted">{t("admin.loading")}</p>;
   const c = data.capacity;
+  const total = data.jobs24h.reduce((n, r) => n + r.total, 0);
+  const failed = data.jobs24h.reduce((n, r) => n + r.failed, 0);
   return (
     <div className="admin-grid">
-      {data.seeAllContent && <p className="notice wide-card">{t("admin.overview.seeAll")}</p>}
+      <section className="stats wide-card" aria-label={t("admin.overview.jobs24h")}>
+        <div>
+          <span className="label">{t("admin.overview.jobs24h")}</span>
+          <span className="big">{total}</span>
+        </div>
+        <div>
+          <span className="label">{t("admin.overview.failed")}</span>
+          <span className={`big ${failed ? "error" : ""}`}>{failed}</span>
+        </div>
+        <div>
+          <span className="label">{t("admin.overview.spend")} · {t("admin.overview.today")}</span>
+          <span className="big">{f.usd(c.spend.todayUsd)}</span>
+        </div>
+        <div>
+          <span className="label">{t("admin.overview.gpus")}</span>
+          <span className="big">{c.pods.length}<small> / {c.maxPods}</small></span>
+        </div>
+      </section>
+      {data.seeAllContent && <p className="notice warn wide-card">{t("admin.overview.seeAll")}</p>}
       <section className="card">
         <h2>{t("admin.overview.gpus")}</h2>
         {!c.provider && c.pods.length === 0 && <p className="muted">{t("admin.overview.noProvider")}</p>}
@@ -147,20 +170,20 @@ function Overview({ openAccount, openReports }: { openAccount: (id: string) => v
             <thead>
               <tr>
                 <th>{t("admin.accountLabel")}</th>
-                <th>{t("admin.overview.total")}</th>
-                <th>{t("admin.overview.ok")}</th>
-                <th>{t("admin.overview.failed")}</th>
-                <th>{t("admin.overview.active")}</th>
+                <th className="num">{t("admin.overview.total")}</th>
+                <th className="num">{t("admin.overview.ok")}</th>
+                <th className="num">{t("admin.overview.failed")}</th>
+                <th className="num">{t("admin.overview.active")}</th>
               </tr>
             </thead>
             <tbody>
               {data.jobs24h.map((r) => (
                 <tr key={r.user_id}>
                   <td><button className="link" onClick={() => openAccount(r.user_id)}>{r.email}</button></td>
-                  <td>{r.total}</td>
-                  <td>{r.succeeded}</td>
-                  <td className={r.failed ? "error" : ""}>{r.failed}</td>
-                  <td>{r.active}</td>
+                  <td className="num">{r.total}</td>
+                  <td className="num">{r.succeeded}</td>
+                  <td className={`num ${r.failed ? "error" : ""}`}>{r.failed}</td>
+                  <td className="num">{r.active}</td>
                 </tr>
               ))}
             </tbody>
@@ -518,7 +541,7 @@ function JobItem({ j }: { j: AdminJob }) {
               pics[k] ? (
                 <a key={k} href={pics[k]} target="_blank" rel="noreferrer">
                   <img src={pics[k]} alt={t(`admin.jobs.pic.${k}`)} loading="lazy" />
-                  <span>{t(`admin.jobs.pic.${k}`)}</span>
+                  <span>FIG. {k === "sketch" ? 1 : k === "hint" ? 2 : 3} — {t(`admin.jobs.pic.${k}`)}</span>
                 </a>
               ) : null,
             )}
@@ -588,7 +611,7 @@ function Reports() {
             <div className="row wrap">
               <input className="grow" placeholder={t("admin.reports.note")} value={notes[r.id] ?? ""} onChange={(e) => setNotes({ ...notes, [r.id]: e.target.value })} />
               <button className="ghost small" onClick={() => act(r.id, "dismiss")}>{t("admin.reports.dismiss")}</button>
-              <button className="small" onClick={() => act(r.id, "remove")}>{t("admin.reports.remove")}</button>
+              <button className="danger small" onClick={() => act(r.id, "remove")}>{t("admin.reports.remove")}</button>
               <button className="ghost small" onClick={() => act(r.id, "flag-account")}>{t("admin.reports.flag")}</button>
             </div>
           ) : (

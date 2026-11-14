@@ -17,7 +17,10 @@
     "passwordHint": "At least 10 characters",
     "haveAccount": "Already have an account?",
     "noAccount": "New here?",
-    "working": "One moment…"
+    "working": "One moment…",
+    "headline": "From sketch to result,\nin one pipeline.",
+    "figure": "FIG. 1 — A sketch, as a print",
+    "figureNote": "512 × 512 · map with regions"
   },
   "home": {
     "credits": "Credits",
@@ -54,7 +57,8 @@
       "cancelled": "Cancelled"
     },
     "step": "Step {{step}} of {{steps}}: {{op}}",
-    "seconds": "{{value}} s of worker time"
+    "seconds": "{{value}} s of worker time",
+    "pipeline": "Pipeline"
   },
   "errors": {
     "auth.required": "Please log in.",
